@@ -1,0 +1,44 @@
+[
+    {
+        "data": "2026-01-14 13:23:34",
+        "model": "gpt-4o-mini",
+        "tokens_input": 8725,
+        "tokens_output": 268,
+        "cost_usd": 0.00146955
+    },
+    {
+        "data": "2026-01-14 13:34:34",
+        "model": "gpt-4o-mini",
+        "tokens_input": 14392,
+        "tokens_output": 805,
+        "cost_usd": 0.0026417999999999997
+    },
+    {
+        "data": "2026-01-14 13:37:45",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37060,
+        "tokens_output": 273,
+        "cost_usd": 0.0057228
+    },
+    {
+        "data": "2026-01-14 13:44:33",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37223,
+        "tokens_output": 275,
+        "cost_usd": 0.00574845
+    },
+    {
+        "data": "2026-01-14 14:01:41",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37223,
+        "tokens_output": 290,
+        "cost_usd": 0.005757449999999999
+    },
+    {
+        "data": "2026-01-14 21:36:38",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37221,
+        "tokens_output": 290,
+        "cost_usd": 0.005757149999999999
+    }
+]

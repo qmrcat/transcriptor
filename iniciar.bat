@@ -1,0 +1,9 @@
+@echo off
+echo Preparant l'entorn virtual...
+python -m venv venv
+call venv\Scripts\activate
+echo Instal·lant dependències...
+pip install -r requirements.txt
+echo Llançant l'aplicació...
+python main.py
+pause
