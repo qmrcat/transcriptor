@@ -39,6 +39,6 @@
         "model": "gpt-4o-mini",
         "tokens_input": 37221,
         "tokens_output": 290,
-        "cost_usd": 0.005757149999999999
+        "cost_usd": 0.0057571499999999999
     }
 ]
