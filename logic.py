@@ -15,6 +15,13 @@ class TranscriptorTiquets:
         # Permet Ollama/LM Studio o OpenAI oficial
         self.client = OpenAI(api_key=self.api_key, base_url=base_url) if self.api_key else None
 
+        # Client per Ollama (IA Local)
+        # Per defecte Ollama escolta al port 11434
+        self.client_ollama = OpenAI(
+            base_url=os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434/v1",
+            api_key="ollama" # Ollama no necessita clau real, però la llibreria la demana
+        )
+
     def _codificar_imatge_base64(self, ruta_imatge):
         """Converteix un fitxer d'imatge en una cadena Base64 per a l'API."""
         with open(ruta_imatge, "rb") as fitxer_imatge:
@@ -60,7 +67,8 @@ class TranscriptorTiquets:
 
         try:
             resposta = self.client.chat.completions.create(
-                model="gpt-4o-mini", # Model més ràpid i econòmic per a visió
+                # model="gpt-4o-mini", # Model més ràpid i econòmic per a visió
+                model=os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
                 messages=[
                     {
                         "role": "user",
@@ -90,6 +98,34 @@ class TranscriptorTiquets:
 
         except Exception as e:
             return {"error": f"Error en la crida a OpenAI: {str(e)}"}
+    
+    def processar_amb_ollama(self, ruta_imatge):
+        """Processament mitjançant Ollama Local (Gratuït i Privat)."""
+        base64_image = self._codificar_imatge_base64(ruta_imatge)
+        
+        prompt_sistema = "Analitza aquest tiquet i retorna un JSON amb: establiment, data, total i articles."
+        
+        try:
+            resposta = self.client_ollama.chat.completions.create(
+                # model="llama3-vision", # Assegura't de tenir-lo descarregat: 'ollama pull llama3-vision'
+                model=os.getenv("OLLAMA_MODEL") or "llama3-vision",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_sistema},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                            },
+                        ],
+                    }
+                ],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(resposta.choices[0].message.content)
+        except Exception as e:
+            return {"error": f"Ollama no respon: {str(e)}. Revisa si el servidor està actiu."}
 
 class TranscriptorAmbCostos(TranscriptorTiquets):
     def __init__(self, api_key=None):

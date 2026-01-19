@@ -8,6 +8,8 @@ import pandas as pd
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
 from utils import GestorConfiguracio
 import pdf2image
+import time
+import threading # Perquè la interfície no es bloquegi mentre esperem la IA
 
 class InterficieGrafica(TkinterDnD.Tk):
     def __init__(self):
@@ -119,6 +121,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         ctk.CTkLabel(self.radio_frame, text="Mètode d'extracció:", font=("Arial", 12, "bold")).pack(side="left", padx=15)
         ctk.CTkRadioButton(self.radio_frame, text="OCR Local", variable=self.metode_var, value="ocr").pack(side="left", padx=10)
         ctk.CTkRadioButton(self.radio_frame, text="IA (OpenAI)", variable=self.metode_var, value="openai").pack(side="left", padx=10)
+        ctk.CTkRadioButton(self.radio_frame, text="Ollama (Local)", variable=self.metode_var, value="ollama").pack(side="left", padx=10)
 
         # Àrea de resultats
         self.txt_resultat = ctk.CTkTextbox(self.frame_dret, font=("Consolas", 12), border_width=2)
@@ -130,6 +133,17 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         self.btn_processar = ctk.CTkButton(self.frame_botons, text="🚀 ANALITZAR DOCUMENT", fg_color="#2ecc71", hover_color="#27ae60", height=45, font=("Arial", 14, "bold"), command=self._processar_fitxer)
         self.btn_processar.pack(fill="x", pady=(0, 15))
+
+        # Àrea d'estat (Sota el botó Analitzar)
+        self.frame_status = ctk.CTkFrame(self.frame_botons, fg_color="transparent")
+        self.frame_status.pack(fill="x", pady=5)
+
+        self.progress_bar = ctk.CTkProgressBar(self.frame_status, orientation="horizontal", height=10)
+        self.progress_bar.set(0) # Inicialment buida
+        
+        self.lbl_cronometre = ctk.CTkLabel(self.frame_status, text="Temps: 0.0s", font=("Arial", 11))
+        self.lbl_cronometre.pack(side="right", padx=10)
+
 
         self.subframe_botons = ctk.CTkFrame(self.frame_botons, fg_color="transparent")
         self.subframe_botons.pack(fill="x")
@@ -333,32 +347,109 @@ class InterficieGrafica(TkinterDnD.Tk):
         self._actualitzar_canvas()
 
 
+    # def _processar_fitxer(self):
+    #     if not self.ruta_fitxer_actual:
+    #         messagebox.showwarning("Atenció", "Selecciona o arrossega un document primer.")
+    #         return
+        
+    #     self.txt_resultat.delete("1.0", "end")
+    #     self.txt_resultat.insert("end", "⏳ Analitzant dades... Un moment, si us plau.")
+    #     self.update()
+
+    #     metode = self.metode_var.get()
+
+    #     try:
+    #         if metode == "ocr":
+    #             res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
+    #             # self.txt_resultat.delete("1.0", "end")
+    #             # self.txt_resultat.insert("end", res)
+    #         elif metode == "openai":
+    #             res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
+    #             # self.txt_resultat.delete("1.0", "end")
+    #             # self.txt_resultat.insert("end", json.dumps(res, indent=4, ensure_ascii=False))
+    #         elif metode == "ollama":
+    #             res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+
+    #         # Mostrar resultats
+    #         self.txt_resultat.delete("1.0", "end")
+    #         if isinstance(res, dict):
+    #             self.txt_resultat.insert("end", json.dumps(res, indent=4, ensure_ascii=False))
+    #         else:
+    #             self.txt_resultat.insert("end", str(res))
+    #     except Exception as e:
+    #         self.txt_resultat.delete("1.0", "end")
+    #         self.txt_resultat.insert("end", f"❌ Error crític: {str(e)}")
+
     def _processar_fitxer(self):
         if not self.ruta_fitxer_actual:
-            messagebox.showwarning("Atenció", "Selecciona o arrossega un document primer.")
+            messagebox.showwarning("Atenció", "Selecciona un document primer.")
             return
+
+        # 1. Preparem la interfície per a l'espera
+        self.btn_processar.configure(state="disabled", text="PROCESSANT...")
+        self.progress_bar.pack(fill="x", pady=5)
+        self.progress_bar.start() # Activa l'animació de "spinner"
+        self.txt_resultat.delete("1.0", "end")
+        self.txt_resultat.insert("end", "⏳ Connectant amb el servidor de IA...")
+        
+        # 2. Iniciem el cronòmetre i el fil de processament
+        self.inici_temps = time.time()
+        self.processant = True
+        self._actualitzar_cronometre_visual()
+        
+        # Executem la IA en un fil a part perquè la GUI no es congeli
+        thread = threading.Thread(target=self._executar_logica_ia)
+        thread.start()
+
+    def _actualitzar_cronometre_visual(self):
+        """Actualitza el text del temps cada 100ms mentre es processa."""
+        if self.processant:
+            temps_tardat = time.time() - self.inici_temps
+            self.lbl_cronometre.configure(text=f"Temps: {temps_tardat:.1f}s")
+            self.after(100, self._actualitzar_cronometre_visual)
+
+
+    def _executar_logica_ia(self):
+        """Aquest mètode corre en segon pla."""
+        metode = self.metode_var.get()
+        try:
+            if metode == "ocr":
+                res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
+            elif metode == "openai":
+                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
+            elif metode == "ollama":
+                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+            
+            # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
+            self.after(0, lambda: self._finalitzar_processament(res))
+            
+        except Exception as e:
+            self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
+
+
+    def _finalitzar_processament(self, resultat):
+        """Restaura la interfície i mostra el resultat final."""
+        self.processant = False
+        temps_final = time.time() - self.inici_temps
+        
+        self.progress_bar.stop()
+        self.progress_bar.pack_forget() # Amaguem la barra
+        self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
         
         self.txt_resultat.delete("1.0", "end")
-        self.txt_resultat.insert("end", "⏳ Analitzant dades... Un moment, si us plau.")
-        self.update()
+        if isinstance(resultat, dict):
+            self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
+        else:
+            self.txt_resultat.insert("end", str(resultat))
+        
+        self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
 
-        try:
-            if self.metode_var.get() == "ocr":
-                res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
-                self.txt_resultat.delete("1.0", "end")
-                self.txt_resultat.insert("end", res)
-            else:
-                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
-                self.txt_resultat.delete("1.0", "end")
-                self.txt_resultat.insert("end", json.dumps(res, indent=4, ensure_ascii=False))
-        except Exception as e:
-            self.txt_resultat.delete("1.0", "end")
-            self.txt_resultat.insert("end", f"❌ Error crític: {str(e)}")
 
     def _copiar_resultats(self):
         self.clipboard_clear()
         self.clipboard_append(self.txt_resultat.get("1.0", "end"))
         messagebox.showinfo("Copiat", "Resultat enviat al porta-retalls.")
+
 
     def _exportar_excel(self):
         contingut = self.txt_resultat.get("1.0", "end").strip()
@@ -371,6 +462,7 @@ class InterficieGrafica(TkinterDnD.Tk):
                 messagebox.showinfo("Èxit", "Dades exportades correctament a Excel.")
         except:
             messagebox.showerror("Error d'exportació", "Només es poden exportar resultats en format JSON (mètode IA).")
+
 
     def _netejar(self):
         self.txt_resultat.delete("1.0", "end")
