@@ -52,7 +52,7 @@ class TranscriptorTiquets:
         {
           "establiment": "Nom", "nifEstabliment": "CIF/NIF", "numeroFacturaRebutTiquet": "ID",
           "data": "DD/MM/YYYY", "hora": "HH:MM", "total": "0.00 €",
-          "impostos": [{"IVA": "21%", "importBaseIVA": "0.00", "quaotaIVA": "0.00"}],
+          "impostos": [{"percentatgeIVA": "21%", "importBaseIVA": "0.00", "quotaIVA": "0.00"}],
           "articles": [{"nom": "Producte", "quantitat": 1, "preu": "0.00 €", "IVA": "21%", "importTotal": "0.00"}],
           "forma_pagament": "Targeta/Efectiu"
         }
@@ -63,6 +63,14 @@ class TranscriptorTiquets:
         - Si hi ha diversos tipus d'IVA, inclou-los tots a l'array "impostos", a vegades s'inclou un total dels impostos, no ho afegeixis.
         - L'array "articles" ha de contenir tots els productes/serveis detallats al tiquet, a vagades la columna 'preu' li poden dir 'base'.
         - La "forma_pagament" ha de ser una cadena curta indicant com s'ha pagat (Targeta, Efectiu, etc.).
+        - Els tiquet poden estar en castellà o català.
+        - La columna "quantitat" pot aparèixer com "cant", "Unitats", "Uni", "cantidad", "QT", "qty" o no apareixer.
+        - La columna "preu" al tiquet pot aparèixer com a "preu", "precio", "PVP" o "base".
+        - La columna "percentatgeIVA" pot aparèixer com a "%IVA", "Tipo IVA" o "% IVA".
+        - La columna "quotaIVA" pot aparèixer com a "IVA", "I.V.A.", "Cuota IVA" o "Import IVA".
+        - La columna "importTotal" pot aparèixer com a "total", "importe", "Importe total" o "Total artículo".
+        - En algun cas, els articles estant en dos files (descripció i total en una fila, quantitat i preu en una altra), no sempre segueix aquest ordre,intenta combinar-los correctament.
+        - Algunes columnes pode que no tinguin títol, identifica-les pel contingut o no apereixin.
         """
 
         try:

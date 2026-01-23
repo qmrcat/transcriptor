@@ -10,11 +10,16 @@ from utils import GestorConfiguracio
 import pdf2image
 import time
 import threading # Perquè la interfície no es bloquegi mentre esperem la IA
+import winsound  # Per a Windows
+from utils import GestorConfiguracio
 
 class InterficieGrafica(TkinterDnD.Tk):
+
     def __init__(self):
         super().__init__()
         
+        self.config = GestorConfiguracio.carregar_config()
+
         self.title("Transcriptor de Tiquets Pro - Digitalització")
         self.geometry("1300x850")
         ctk.set_appearance_mode("dark")
@@ -27,8 +32,11 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.imatge_original = None
         self.zoom_level = 1.0
 
+        self.cancel·lar_proces = False
+
         self._configurar_layout()
         self._configurar_dnd()
+
 
     def _configurar_layout(self):
         self.grid_columnconfigure(0, weight=1) 
@@ -83,28 +91,20 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         # --- NOVA BARRA DE NAVEGACIÓ PDF ---
         self.nav_bar = ctk.CTkFrame(self.frame_esquerre, fg_color="transparent")
-        self.nav_bar.pack(fill="x", pady=5)
+        self.nav_bar.pack(fill="x", pady=2)
         
         self.btn_prev = ctk.CTkButton(self.nav_bar, text="◀ Anterior", width=80, command=self._pagina_anterior)
-        self.btn_prev.pack(side="left", padx=10)
+        self.btn_prev.pack(side="left", padx=20)
         
         self.lbl_pagines = ctk.CTkLabel(self.nav_bar, text="Pàgina: 0 / 0")
         self.lbl_pagines.pack(side="left", expand=True)
         
         self.btn_next = ctk.CTkButton(self.nav_bar, text="Següent ▶", width=80, command=self._pagina_seguent)
-        self.btn_next.pack(side="right", padx=10)
-
-        # # Controls de Zoom
-        # self.frame_zoom = ctk.CTkFrame(self.frame_esquerre, fg_color="transparent")
-        # self.frame_zoom.pack(fill="x", pady=10)
-        # ctk.CTkButton(self.frame_zoom, text="-", width=40, command=lambda: self._zoom(-0.1)).pack(side="left", padx=20)
-        # self.lbl_zoom = ctk.CTkLabel(self.frame_zoom, text="100%")
-        # self.lbl_zoom.pack(side="left", padx=10)
-        # ctk.CTkButton(self.frame_zoom, text="+", width=40, command=lambda: self._zoom(0.1)).pack(side="left", padx=10)
+        self.btn_next.pack(side="right", padx=20)
 
         # Controls de Zoom
         self.frame_zoom = ctk.CTkFrame(self.frame_esquerre, fg_color="transparent")
-        self.frame_zoom.pack(fill="x", pady=5)
+        self.frame_zoom.pack(fill="x", pady=5, padx=10)
         ctk.CTkButton(self.frame_zoom, text="-", width=40, command=lambda: self._zoom(-0.1)).pack(side="left", padx=10)
         self.lbl_zoom = ctk.CTkLabel(self.frame_zoom, text="100%")
         self.lbl_zoom.pack(side="left", padx=5)
@@ -140,10 +140,22 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         self.progress_bar = ctk.CTkProgressBar(self.frame_status, orientation="horizontal", height=10)
         self.progress_bar.set(0) # Inicialment buida
+
+        # Dins de _configurar_layout (a la zona de la barra de progrés)
+        self.btn_stop = ctk.CTkButton(
+            self.frame_status, 
+            text="Aturar", 
+            fg_color="#e74c3c", 
+            hover_color="#c0392b", 
+            width=60, 
+            height=20,
+            command=self._sol·licitar_aturada
+        )
+        # El botó estarà amagat fins que comenci el procés
+        self.btn_stop.pack_forget()
         
         self.lbl_cronometre = ctk.CTkLabel(self.frame_status, text="Temps: 0.0s", font=("Arial", 11))
         self.lbl_cronometre.pack(side="right", padx=10)
-
 
         self.subframe_botons = ctk.CTkFrame(self.frame_botons, fg_color="transparent")
         self.subframe_botons.pack(fill="x")
@@ -151,12 +163,14 @@ class InterficieGrafica(TkinterDnD.Tk):
         ctk.CTkButton(self.subframe_botons, text="Excel", width=90, fg_color="#2980b9", command=self._exportar_excel).pack(side="left", padx=5)
         ctk.CTkButton(self.subframe_botons, text="Netejar", width=90, fg_color="#e74c3c", command=self._netejar).pack(side="right", padx=5)
 
+
     def _seleccionar_fitxer_manual(self):
         tipus = [("Tots els documents", "*.jpg *.jpeg *.png *.webp *.pdf"), ("Imatges", "*.jpg *.jpeg *.png *.webp"), ("PDF", "*.pdf")]
         ruta = filedialog.askopenfilename(filetypes=tipus)
         if ruta:
             self.ruta_fitxer_actual = ruta
             self._mostrar_preview(ruta)
+
 
     def _configurar_dnd(self):
         self.canvas_imatge.drop_target_register(DND_FILES)
@@ -184,7 +198,8 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _on_mousewheel_h(self, event):
         """Gestiona el scroll horitzontal amb Shift + Roda del ratolí."""
-        self.canvas_imatge.xview_scroll(int(-1 * (event.delta / 120)), "units")     
+        self.canvas_imatge.xview_scroll(int(-1 * (event.delta / 120)), "units")
+
 
     def _gestionar_roda(self, event):
         # Si la tecla Control està premuda, fem Zoom
@@ -206,48 +221,12 @@ class InterficieGrafica(TkinterDnD.Tk):
         else:
             messagebox.showwarning("Format no vàlid", "Només acceptem imatges i PDFs.")
 
-    # def _mostrar_preview(self, ruta):
-    #     self.canvas_imatge.delete("all")
-    #     if ruta.lower().endswith(".pdf"):
-    #         self.canvas_imatge.create_text(250, 250, text="📄 PDF CARREGAT\nPronto per analitzar", fill="white", font=("Arial", 16, "bold"), justify="center")
-    #         return
-        
-    #     try:
-    #         self.imatge_original = Image.open(ruta)
-    #         self._actualitzar_canvas()
-    #     except Exception as e:
-    #         messagebox.showerror("Error de lectura", f"No es pot obrir la imatge: {e}")
-
-    # def _actualitzar_canvas(self):
-    #     if self.imatge_original:
-    #         w, h = self.imatge_original.size
-    #         ratio = min(500/w, 600/h) * self.zoom_level
-    #         new_size = (int(w*ratio), int(h*ratio))
-    #         img_resized = self.imatge_original.resize(new_size, Image.Resampling.LANCZOS)
-    #         self.tk_img = ImageTk.PhotoImage(img_resized)
-    #         self.canvas_imatge.delete("all")
-    #         self.canvas_imatge.create_image(250, 300, anchor="center", image=self.tk_img)
-
 
     def _mostrar_preview(self, ruta):
         """Carrega i mostra el document (Imatge o PDF) al canvas."""
         self.canvas_imatge.delete("all")
         self.zoom_level = 1.0 # Reset zoom en carregar nou fitxer
-        
-        # try:
-        #     if ruta.lower().endswith(".pdf"):
-        #         # Convertim la primera pàgina del PDF a imatge
-        #         # 'poppler_path' és opcional si ja està al PATH del sistema
-        #         pagines = pdf2image.convert_from_path(ruta, first_page=1, last_page=1)
-        #         if pagines:
-        #             self.imatge_original = pagines[0]
-        #         else:
-        #             raise Exception("No s'ha pogut convertir el PDF.")
-        #     else:
-        #         # Càrrega d'imatge estàndard
-        #         self.imatge_original = Image.open(ruta)
-            
-        #     self._actualitzar_canvas()
+
         try:
             if ruta.lower().endswith(".pdf"):
                 # Convertim TOTES les pàgines (ull: si el PDF és molt gran, pot tardar)
@@ -268,6 +247,7 @@ class InterficieGrafica(TkinterDnD.Tk):
                 fill="red", font=("Arial", 10), justify="center")
             messagebox.showerror("Error de lectura", f"No es pot \nprevisualitzar el fitxer: {e}")
 
+
     def _actualitzar_status_pagines(self):
         total = len(self.llista_pagines_pdf)
         self.lbl_pagines.configure(text=f"Pàgina: {self.pagina_actual + 1} / {total}")
@@ -276,6 +256,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.btn_prev.configure(state="normal" if self.pagina_actual > 0 else "disabled")
         self.btn_next.configure(state="normal" if self.pagina_actual < total - 1 else "disabled")
 
+
     def _pagina_anterior(self):
         if self.pagina_actual > 0:
             self.pagina_actual -= 1
@@ -283,40 +264,13 @@ class InterficieGrafica(TkinterDnD.Tk):
             self._actualitzar_status_pagines()
             self._actualitzar_canvas()
 
+
     def _pagina_seguent(self):
         if self.pagina_actual < len(self.llista_pagines_pdf) - 1:
             self.pagina_actual += 1
             self.imatge_original = self.llista_pagines_pdf[self.pagina_actual]
             self._actualitzar_status_pagines()
             self._actualitzar_canvas()      
-
-    # def _actualitzar_canvas(self):
-    #     """Redibuixa l'imatge al canvas aplicant el zoom i centrant-la."""
-    #     if self.imatge_original:
-    #         # Obtenim mides del canvas per centrar
-    #         self.update_idletasks() # Força l'actualització de mides
-    #         cw = self.canvas_imatge.winfo_width()
-    #         ch = self.canvas_imatge.winfo_height()
-            
-    #         # Valors per defecte si el canvas encara no s'ha dibuixat
-    #         if cw < 10: cw, ch = 500, 600
-
-    #         w, h = self.imatge_original.size
-    #         # Calculem el ratio per encabir l'imatge al canvas mantenint proporcions
-    #         ratio = min(cw/w, ch/h) * self.zoom_level            
-    #         new_size = (int(w * ratio), int(h * ratio))
-
-    #         img_resized = self.imatge_original.resize(new_size, Image.Resampling.LANCZOS)
-    #         self.tk_img = ImageTk.PhotoImage(img_resized)
-    #         self.canvas_imatge.delete("all")
-    #         # Dibuixem l'imatge centrada
-    #         self.canvas_imatge.create_image(cw // 2, ch // 2, anchor="center", image=self.tk_img)
-
-    # def _zoom(self, delta):
-    #     self.zoom_level = max(0.2, min(3, self.zoom_level + delta))
-    #     self.lbl_zoom.configure(text=f"{int(self.zoom_level*100)}%")
-    #     self._actualitzar_canvas()
-
 
 
     def _actualitzar_canvas(self):
@@ -347,39 +301,6 @@ class InterficieGrafica(TkinterDnD.Tk):
         self._actualitzar_canvas()
 
 
-    # def _processar_fitxer(self):
-    #     if not self.ruta_fitxer_actual:
-    #         messagebox.showwarning("Atenció", "Selecciona o arrossega un document primer.")
-    #         return
-        
-    #     self.txt_resultat.delete("1.0", "end")
-    #     self.txt_resultat.insert("end", "⏳ Analitzant dades... Un moment, si us plau.")
-    #     self.update()
-
-    #     metode = self.metode_var.get()
-
-    #     try:
-    #         if metode == "ocr":
-    #             res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
-    #             # self.txt_resultat.delete("1.0", "end")
-    #             # self.txt_resultat.insert("end", res)
-    #         elif metode == "openai":
-    #             res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
-    #             # self.txt_resultat.delete("1.0", "end")
-    #             # self.txt_resultat.insert("end", json.dumps(res, indent=4, ensure_ascii=False))
-    #         elif metode == "ollama":
-    #             res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
-
-    #         # Mostrar resultats
-    #         self.txt_resultat.delete("1.0", "end")
-    #         if isinstance(res, dict):
-    #             self.txt_resultat.insert("end", json.dumps(res, indent=4, ensure_ascii=False))
-    #         else:
-    #             self.txt_resultat.insert("end", str(res))
-    #     except Exception as e:
-    #         self.txt_resultat.delete("1.0", "end")
-    #         self.txt_resultat.insert("end", f"❌ Error crític: {str(e)}")
-
     def _processar_fitxer(self):
         if not self.ruta_fitxer_actual:
             messagebox.showwarning("Atenció", "Selecciona un document primer.")
@@ -401,6 +322,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         thread = threading.Thread(target=self._executar_logica_ia)
         thread.start()
 
+
     def _actualitzar_cronometre_visual(self):
         """Actualitza el text del temps cada 100ms mentre es processa."""
         if self.processant:
@@ -409,40 +331,128 @@ class InterficieGrafica(TkinterDnD.Tk):
             self.after(100, self._actualitzar_cronometre_visual)
 
 
+    # def _executar_logica_ia(self):
+    #     """Aquest mètode corre en segon pla."""
+    #     metode = self.metode_var.get()
+    #     try:
+    #         if metode == "ocr":
+    #             res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
+    #         elif metode == "openai":
+    #             res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
+    #         elif metode == "ollama":
+    #             res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+            
+    #         # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
+    #         self.after(0, lambda: self._finalitzar_processament(res))
+            
+    #     except Exception as e:
+    #         self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
+
+    def _sol·licitar_aturada(self):
+        """Activa la bandera per aturar el processament per lots."""
+        self.cancel·lar_proces = True
+        self.btn_stop.configure(text="Aturant...", state="disabled")
+
+
     def _executar_logica_ia(self):
-        """Aquest mètode corre en segon pla."""
         metode = self.metode_var.get()
-        try:
-            if metode == "ocr":
-                res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
-            elif metode == "openai":
-                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
-            elif metode == "ollama":
-                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+        resultats_acumulats = []
+        self.cancel·lar_proces = False # Reset al començar
+        
+        # Mostrem el botó d'aturar al fil principal
+        self.after(0, lambda: self.btn_stop.pack(side="left", padx=5))
+
+        fitxers = self.cua_processament if hasattr(self, 'cua_processament') and self.cua_processament else [self.ruta_fitxer_actual]
+
+        for i, ruta in enumerate(fitxers):
+            # COMPROVACIÓ D'ATURADA: Si l'usuari ha premut Stop, sortim del bucle
+            if self.cancel·lar_proces:
+                self.after(0, lambda: self.txt_resultat.insert("end", "\n🛑 Procés cancel·lat per l'usuari.\n"))
+                break
+
+            self.after(0, lambda r=ruta, n=i+1: self.txt_resultat.insert("end", f"\n---\n📄 ({n}/{len(fitxers)}) {os.path.basename(r)}\n"))
             
-            # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
-            self.after(0, lambda: self._finalitzar_processament(res))
-            
-        except Exception as e:
-            self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
+            try:
+                if metode == "ocr":
+                    res = self.transcriptor.processar_imatge_ocr(ruta)
+                elif metode == "openai":
+                    res = self.transcriptor.processar_amb_openai(ruta)
+                elif metode == "ollama":
+                    res = self.transcriptor.processar_amb_ollama(ruta)
+                
+                resultats_acumulats.append(res)
+            except Exception as e:
+                resultats_acumulats.append({"error": str(e), "fitxer": ruta})
+
+        self.after(0, lambda: self._finalitzar_processament(resultats_acumulats))
 
 
-    def _finalitzar_processament(self, resultat):
-        """Restaura la interfície i mostra el resultat final."""
+    def _reproduir_notificacio(self):
+        """Reprodueix un so de notificació si està activat al .env."""
+        if self.config.get("enable_sound"):
+            try:
+                # So tipus "Asterisk" de Windows (suau i professional)
+                winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS)
+                
+                # Opcional: Un "Beep" personalitzat (Freqüència, Durada en ms)
+                # winsound.Beep(1000, 200) 
+            except Exception as e:
+                print(f"No s'ha pogut reproduir el so: {e}")
+
+
+    # def _finalitzar_processament(self, resultat):
+    #     """Restaura la interfície i mostra el resultat final."""
+    #     self.processant = False
+    #     temps_final = time.time() - self.inici_temps
+        
+    #     self.progress_bar.stop()
+    #     self.progress_bar.pack_forget() # Amaguem la barra
+    #     self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
+
+    #     self.btn_stop.pack_forget() # Amaguem el botó Stop
+    #     self.btn_stop.configure(text="Aturar", state="normal")
+        
+    #     self.txt_resultat.delete("1.0", "end")
+    #     if isinstance(resultat, dict):
+    #         self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
+    #     else:
+    #         self.txt_resultat.insert("end", str(resultat))
+        
+    #     self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
+
+    #     # REPRODUIR SO DE FINALITZACIÓ
+    #     self._reproduir_notificacio()
+
+    def _finalitzar_processament(self, resultats):
         self.processant = False
         temps_final = time.time() - self.inici_temps
         
         self.progress_bar.stop()
-        self.progress_bar.pack_forget() # Amaguem la barra
+        self.progress_bar.pack_forget()
+        self.btn_stop.pack_forget()
         self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
         
         self.txt_resultat.delete("1.0", "end")
-        if isinstance(resultat, dict):
-            self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
-        else:
-            self.txt_resultat.insert("end", str(resultat))
         
+        # Cas A: Hem processat diversos fitxers (Llista)
+        if isinstance(resultats, list):
+            # Formatem la llista per a que es vegi bé al Textbox
+            text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
+            self.txt_resultat.insert("end", text_formatat)
+            
+            self.txt_resultat.insert("end", f"\n\n✅ Processament per lots finalitzat.")
+            
+            # Preguntar per l'exportació col·lectiva
+            if messagebox.askyesno("Exportar tot", f"S'han processat {len(resultats)} tiquets. Vols exportar-los a un sol Excel?"):
+                self._exportar_tots_a_excel(resultats)
+        
+        # Cas B: Procés individual (Diccionari)
+        else:
+            text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
+            self.txt_resultat.insert("end", text_formatat)
+
         self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
+        self._reproduir_notificacio()
 
 
     def _copiar_resultats(self):
@@ -472,3 +482,4 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.imatge_original = None
         self.zoom_level = 1.0
         self.lbl_zoom.configure(text="100%")
+

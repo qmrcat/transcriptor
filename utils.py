@@ -1,6 +1,22 @@
 import json
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# class GestorConfiguracio:
+#     @staticmethod
+#     def desar_config(dades):
+#         with open("config.json", "w", encoding="utf-8") as f:
+#             json.dump(dades, f, indent=4)
+
+#     @staticmethod
+#     def carregar_config():
+#         if os.path.exists("config.json"):
+#             with open("config.json", "r", encoding="utf-8") as f:
+#                 return json.load(f)
+#         return {}
 
 class GestorConfiguracio:
     @staticmethod
@@ -10,10 +26,22 @@ class GestorConfiguracio:
 
     @staticmethod
     def carregar_config():
+        config = {}
         if os.path.exists("config.json"):
             with open("config.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
+                config = json.load(f)
+        
+        # Incorporem la API Key des del .env si no està al JSON
+        if "api_key" not in config:
+            config["api_key"] = os.getenv("OPENAI_API_KEY", "")
+        
+        # Afegim el control del so (per defecte True si no hi és)
+        if "enable_sound" not in config:
+            config["enable_sound"] = os.getenv("ENABLE_SOUND", "TRUE").upper() == "TRUE"
+
+        print("Configuració carregada:", config)
+        
+        return config
 
 class CalculadoraCostos:
     def __init__(self):
