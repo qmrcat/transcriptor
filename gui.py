@@ -2,31 +2,38 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image, ImageTk
+# import os
 import os
 import json
 import pandas as pd
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
-from utils import GestorConfiguracio
 import pdf2image
 import time
 import threading # Perquè la interfície no es bloquegi mentre esperem la IA
 import winsound  # Per a Windows
 from utils import GestorConfiguracio
 
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+import pygame
+
+
 class InterficieGrafica(TkinterDnD.Tk):
 
     def __init__(self):
         super().__init__()
         
-        self.config = GestorConfiguracio.carregar_config()
+        # self.config = GestorConfiguracio.carregar_config()
+        self.config_dades = GestorConfiguracio.carregar_config()
+
+        print("InterficieGrafica - Configuració GUI:", self.config_dades)
 
         self.title("Transcriptor de Tiquets Pro - Digitalització")
         self.geometry("1300x850")
         ctk.set_appearance_mode("dark")
         
         # Inicialització lògica
-        self.config = GestorConfiguracio.carregar_config()
-        self.transcriptor = TranscriptorAmbCostos(api_key=self.config.get("api_key"))
+        self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
+        # self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
         
         self.ruta_fitxer_actual = None
         self.imatge_original = None
@@ -331,22 +338,23 @@ class InterficieGrafica(TkinterDnD.Tk):
             self.after(100, self._actualitzar_cronometre_visual)
 
 
-    # def _executar_logica_ia(self):
-    #     """Aquest mètode corre en segon pla."""
-    #     metode = self.metode_var.get()
-    #     try:
-    #         if metode == "ocr":
-    #             res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
-    #         elif metode == "openai":
-    #             res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
-    #         elif metode == "ollama":
-    #             res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+    def _executar_logica_ia(self):
+        """Aquest mètode corre en segon pla."""
+        metode = self.metode_var.get()
+        # ruta = self.ruta_fitxer_actual [cite: 1]
+        try:
+            if metode == "ocr":
+                res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
+            elif metode == "openai":
+                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
+            elif metode == "ollama":
+                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
             
-    #         # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
-    #         self.after(0, lambda: self._finalitzar_processament(res))
+            # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
+            self.after(0, lambda: self._finalitzar_processament(res))
             
-    #     except Exception as e:
-    #         self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
+        except Exception as e:
+            self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
 
     def _sol·licitar_aturada(self):
         """Activa la bandera per aturar el processament per lots."""
@@ -354,105 +362,117 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.btn_stop.configure(text="Aturant...", state="disabled")
 
 
-    def _executar_logica_ia(self):
-        metode = self.metode_var.get()
-        resultats_acumulats = []
-        self.cancel·lar_proces = False # Reset al començar
+    # def _executar_logica_ia(self):
+    #     metode = self.metode_var.get()
+    #     resultats_acumulats = []
+    #     self.cancel·lar_proces = False # Reset al començar
         
-        # Mostrem el botó d'aturar al fil principal
-        self.after(0, lambda: self.btn_stop.pack(side="left", padx=5))
+    #     # Mostrem el botó d'aturar al fil principal
+    #     self.after(0, lambda: self.btn_stop.pack(side="left", padx=5))
 
-        fitxers = self.cua_processament if hasattr(self, 'cua_processament') and self.cua_processament else [self.ruta_fitxer_actual]
+    #     fitxers = self.cua_processament if hasattr(self, 'cua_processament') and self.cua_processament else [self.ruta_fitxer_actual]
 
-        for i, ruta in enumerate(fitxers):
-            # COMPROVACIÓ D'ATURADA: Si l'usuari ha premut Stop, sortim del bucle
-            if self.cancel·lar_proces:
-                self.after(0, lambda: self.txt_resultat.insert("end", "\n🛑 Procés cancel·lat per l'usuari.\n"))
-                break
+    #     for i, ruta in enumerate(fitxers):
+    #         # COMPROVACIÓ D'ATURADA: Si l'usuari ha premut Stop, sortim del bucle
+    #         if self.cancel·lar_proces:
+    #             self.after(0, lambda: self.txt_resultat.insert("end", "\n🛑 Procés cancel·lat per l'usuari.\n"))
+    #             break
 
-            self.after(0, lambda r=ruta, n=i+1: self.txt_resultat.insert("end", f"\n---\n📄 ({n}/{len(fitxers)}) {os.path.basename(r)}\n"))
+    #         self.after(0, lambda r=ruta, n=i+1: self.txt_resultat.insert("end", f"\n---\n📄 ({n}/{len(fitxers)}) {os.path.basename(r)}\n"))
             
-            try:
-                if metode == "ocr":
-                    res = self.transcriptor.processar_imatge_ocr(ruta)
-                elif metode == "openai":
-                    res = self.transcriptor.processar_amb_openai(ruta)
-                elif metode == "ollama":
-                    res = self.transcriptor.processar_amb_ollama(ruta)
+    #         try:
+    #             if metode == "ocr":
+    #                 res = self.transcriptor.processar_imatge_ocr(ruta)
+    #             elif metode == "openai":
+    #                 res = self.transcriptor.processar_amb_openai(ruta)
+    #             elif metode == "ollama":
+    #                 res = self.transcriptor.processar_amb_ollama(ruta)
                 
-                resultats_acumulats.append(res)
-            except Exception as e:
-                resultats_acumulats.append({"error": str(e), "fitxer": ruta})
+    #             resultats_acumulats.append(res)
+    #         except Exception as e:
+    #             resultats_acumulats.append({"error": str(e), "fitxer": ruta})
 
-        self.after(0, lambda: self._finalitzar_processament(resultats_acumulats))
+    #     self.after(0, lambda: self._finalitzar_processament(resultats_acumulats))
 
 
     def _reproduir_notificacio(self):
         """Reprodueix un so de notificació si està activat al .env."""
-        if self.config.get("enable_sound"):
+        import platform
+        if self.config_dades.get("enable_sound"):
             try:
-                # So tipus "Asterisk" de Windows (suau i professional)
-                winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS)
-                
-                # Opcional: Un "Beep" personalitzat (Freqüència, Durada en ms)
-                # winsound.Beep(1000, 200) 
+                if platform.system() == "Windows":
+                    # So tipus "Asterisk" de Windows (suau i professional)
+                    # winsound.Beep(1000, 200)
+                    # Fallback per a altres sistemes operatius
+                    # import pygame
+                    pygame.mixer.init()
+                    pygame.mixer.music.load('notification.mp3')  # Assegura't que aquest fitxer existeix
+                    pygame.mixer.music.play()                    
+                else:
+                    # Fallback per a altres sistemes operatius
+                    # import pygame
+                    pygame.mixer.init()
+                    pygame.mixer.music.load('notification.mp3')  # Assegura't que aquest fitxer existeix
+                    pygame.mixer.music.play()
             except Exception as e:
                 print(f"No s'ha pogut reproduir el so: {e}")
 
 
-    # def _finalitzar_processament(self, resultat):
-    #     """Restaura la interfície i mostra el resultat final."""
-    #     self.processant = False
-    #     temps_final = time.time() - self.inici_temps
-        
-    #     self.progress_bar.stop()
-    #     self.progress_bar.pack_forget() # Amaguem la barra
-    #     self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
-
-    #     self.btn_stop.pack_forget() # Amaguem el botó Stop
-    #     self.btn_stop.configure(text="Aturar", state="normal")
-        
-    #     self.txt_resultat.delete("1.0", "end")
-    #     if isinstance(resultat, dict):
-    #         self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
-    #     else:
-    #         self.txt_resultat.insert("end", str(resultat))
-        
-    #     self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
-
-    #     # REPRODUIR SO DE FINALITZACIÓ
-    #     self._reproduir_notificacio()
-
-    def _finalitzar_processament(self, resultats):
+    def _finalitzar_processament(self, resultat):
+        """Restaura la interfície i mostra el resultat final."""
         self.processant = False
         temps_final = time.time() - self.inici_temps
         
         self.progress_bar.stop()
-        self.progress_bar.pack_forget()
-        self.btn_stop.pack_forget()
+        self.progress_bar.pack_forget() # Amaguem la barra
         self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
+
+        self.btn_stop.pack_forget() # Amaguem el botó Stop
+        self.btn_stop.configure(text="Aturar", state="normal")
         
         self.txt_resultat.delete("1.0", "end")
-        
-        # Cas A: Hem processat diversos fitxers (Llista)
-        if isinstance(resultats, list):
-            # Formatem la llista per a que es vegi bé al Textbox
-            text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
-            self.txt_resultat.insert("end", text_formatat)
-            
-            self.txt_resultat.insert("end", f"\n\n✅ Processament per lots finalitzat.")
-            
-            # Preguntar per l'exportació col·lectiva
-            if messagebox.askyesno("Exportar tot", f"S'han processat {len(resultats)} tiquets. Vols exportar-los a un sol Excel?"):
-                self._exportar_tots_a_excel(resultats)
-        
-        # Cas B: Procés individual (Diccionari)
+        if isinstance(resultat, dict):
+            self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
         else:
-            text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
-            self.txt_resultat.insert("end", text_formatat)
-
+            self.txt_resultat.insert("end", str(resultat))
+        
         self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
+
+        # REPRODUIR SO DE FINALITZACIÓ
         self._reproduir_notificacio()
+
+
+    # def _finalitzar_processament(self, resultats):
+    #     self.processant = False
+    #     temps_final = time.time() - self.inici_temps
+        
+    #     self.progress_bar.stop()
+    #     self.progress_bar.pack_forget()
+    #     self.btn_stop.pack_forget()
+    #     self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
+        
+    #     self.txt_resultat.delete("1.0", "end")
+        
+    #     # Cas A: Hem processat diversos fitxers (Llista)
+    #     if isinstance(resultats, list):
+    #         # Formatem la llista per a que es vegi bé al Textbox
+    #         text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
+    #         self.txt_resultat.insert("end", text_formatat)
+            
+    #         # self.txt_resultat.insert("end", f"\n\n✅ Processament per lots finalitzat.")
+    #         self.txt_resultat.insert("end", f"\n\n✅ Processament finalitzat.")
+            
+    #         # # Preguntar per l'exportació col·lectiva
+    #         # if messagebox.askyesno("Exportar tot", f"S'han processat {len(resultats)} tiquets. Vols exportar-los a un sol Excel?"):
+    #         #     self._exportar_tots_a_excel(resultats)
+        
+    #     # Cas B: Procés individual (Diccionari)
+    #     else:
+    #         text_formatat = json.dumps(resultats, indent=4, ensure_ascii=False)
+    #         self.txt_resultat.insert("end", text_formatat)
+
+    #     self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
+    #     self._reproduir_notificacio()
 
 
     def _copiar_resultats(self):

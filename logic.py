@@ -47,31 +47,111 @@ class TranscriptorTiquets:
 
         base64_image = self._codificar_imatge_base64(ruta_imatge)
 
-        prompt_sistema = """Ets un expert en comptabilitat i digitalització de documents. 
-        Analitza la imatge del tiquet/albara/factura i retorna EXCLUSIVAMENT un objecte JSON amb el següent format:
-        {
-          "establiment": "Nom", "nifEstabliment": "CIF/NIF", "numeroFacturaRebutTiquet": "ID",
-          "data": "DD/MM/YYYY", "hora": "HH:MM", "total": "0.00 €",
-          "impostos": [{"percentatgeIVA": "21%", "importBaseIVA": "0.00", "quotaIVA": "0.00"}],
-          "articles": [{"nom": "Producte", "quantitat": 1, "preu": "0.00 €", "IVA": "21%", "importTotal": "0.00"}],
-          "forma_pagament": "Targeta/Efectiu"
-        }
-        Si no trobes alguna dada, posa null. No afegeixis text explicatiu.
-        Aclariments:
-        - "data" ha d'estar en format DD/MM/YYYY.
-        - A vagades els tiquets no tenen NIF o desglossament d'IVA, posa null en aquests camps.
-        - Si hi ha diversos tipus d'IVA, inclou-los tots a l'array "impostos", a vegades s'inclou un total dels impostos, no ho afegeixis.
-        - L'array "articles" ha de contenir tots els productes/serveis detallats al tiquet, a vagades la columna 'preu' li poden dir 'base'.
-        - La "forma_pagament" ha de ser una cadena curta indicant com s'ha pagat (Targeta, Efectiu, etc.).
-        - Els tiquet poden estar en castellà o català.
-        - La columna "quantitat" pot aparèixer com "cant", "Unitats", "Uni", "cantidad", "QT", "qty" o no apareixer.
-        - La columna "preu" al tiquet pot aparèixer com a "preu", "precio", "PVP" o "base".
-        - La columna "percentatgeIVA" pot aparèixer com a "%IVA", "Tipo IVA" o "% IVA".
-        - La columna "quotaIVA" pot aparèixer com a "IVA", "I.V.A.", "Cuota IVA" o "Import IVA".
-        - La columna "importTotal" pot aparèixer com a "total", "importe", "Importe total" o "Total artículo".
-        - En algun cas, els articles estant en dos files (descripció i total en una fila, quantitat i preu en una altra), no sempre segueix aquest ordre,intenta combinar-los correctament.
-        - Algunes columnes pode que no tinguin títol, identifica-les pel contingut o no apereixin.
-        """
+        # prompt_sistema = """Ets un expert en comptabilitat i digitalització de documents. 
+        # Analitza la imatge del tiquet/albara/factura i retorna EXCLUSIVAMENT un objecte JSON amb el següent format:
+        # {
+        #   "establiment": "Nom", "nifEstabliment": "CIF/NIF", "numeroFacturaRebutTiquet": "ID",
+        #   "data": "DD/MM/YYYY", "hora": "HH:MM", "total": "0.00 €",
+        #   "impostos": [{"percentatgeIVA": "21%", "importBaseIVA": "0.00", "quotaIVA": "0.00"}],
+        #   "articles": [{"descripció": "Producte/article", "quantitat": 1, "preu": "0.00 €", "importBase": "00.0", "percentatgeIVA": "00%", "importIVA": "0.00", "importTotal": "0.00"}],
+        #   "forma_pagament": "Targeta/Efectiu"
+        # }
+        # Si no trobes alguna dada, posa null. No afegeixis text explicatiu.
+        # Aclariments:
+        # - "data" ha d'estar en format DD/MM/YYYY.
+        # - A vegades els tiquets no tenen NIF o desglossament d'IVA, posa null en aquests camps.
+        # - Si hi ha diversos tipus d'IVA, inclou-los tots a l'array "impostos", a vegades s'inclou un total dels impostos, no ho afegeixis.
+        # - L'array "articles" ha de contenir tots els productes/serveis detallats al tiquet, a vegades la columna 'preu' li poden dir 'base'.
+        # - La "forma_pagament" ha de ser una cadena curta indicant com s'ha pagat (Targeta, Efectiu, etc.).
+        # - Els tiquet poden estar en català, castellà o barrejat, català i castellà.
+        # - La columna "descripció" pot aparèixer com "descripcio", "concepte", "detall", "Producte", "article" o "nom". Aquesta pot estar separada (no sempre) en una fila.
+        # - La columna "quantitat" pot aparèixer com "cant", "unitats", "uni", "quntitat", "QT", "qty" o no apareixer.
+        # - La columna "preu" al tiquet pot aparèixer com a "preu", "precio", "PVP" o "base".
+        # - La columna "importBase" pot aparèixer com a "base", "import base", "importe base" o "subtotal". Aquesta columna pot no aparèixer.
+        # - La columna "percentatgeIVA" pot aparèixer com a "%IVA", "tipus IVA", "% IVA" o "%". Aquesta columna pot no aparèixer.
+        # - La columna "quotaIVA" pot aparèixer com a "IVA", "I.V.A.", "quota IVA" o "import IVA". Aquesta columna pot no aparèixer.
+        # - La columna "importTotal" pot aparèixer com a "total", "import", "Import total" o "total article". Aquesta columna és el total de l'article amb IVA inclòs, també pot no aparèixer, perquè solament es mostri l'import base.
+        # - En algun cas, els articles estant en dues files (descripció i total en una fila, quantitat i preu en una altra), no sempre segueix aquest ordre, intenta combinar-los correctament.
+        # - Algunes columnes poden que no tinguin títol, identifica-les pel contingut, o no apareguin.
+        # - En alguns tiquet poden tenir una linia separa per alguns articles amb un text explicatiu (ex: "oferta especial", "promoció", "descompte client fidel", "pasta sense gluten", etc.), ignora aquestes línies.
+        # - En alguns casos, la quantitat i el preu poden estar junts en la mateixa columna, separats per una "x" (ex: "2 x 3.50") "quantitat x preu", davant de la 'x' poden portar escrit 'unitats', 'unidades' o una paraula similar, separa'ls correctament.
+        # - Tambe pot ser que el preu porti l'IVA inclòs, calcula l'import base i la quota d'IVA segons el percentatge indicat al tiquet, si no s'hi indica el percentatge d'IVA, posa null en els caps corresponents, pot ser que el tiquet indiqui en algun lloc, "IVA inclòs", "Impostos inclosos" o alguna cosa semblant.
+        # - Recorda que en català o castellà la separació decimal és amb coma, però en l'anglès és amb punt, retorna sempre els imports amb coma.
+        # """
+        prompt_sistema = """Ets un expert en comptabilitat i digitalització de documents.
+
+Analitza la imatge d’un tiquet, albarà o factura i retorna EXCLUSIVAMENT un objecte JSON.
+No afegeixis cap text fora del JSON.
+No facis explicacions.
+No dedueixis, no estimis ni inventis cap dada.
+
+Si una informació no apareix explícitament al document o no es pot calcular de manera directa i fiable, posa null.
+
+El JSON ha de tenir exactament aquest format:
+
+{
+  "establiment": "Nom",
+  "nifEstabliment": "CIF/NIF",
+  "numeroFacturaRebutTiquet": "ID",
+  "data": "DD/MM/YYYY",
+  "hora": "HH:MM",
+  "total": "0,00",
+  "impostos": [
+    {
+    "percentatgeIVA": "21%",
+    "importBaseIVA": "0,00",
+    "quotaIVA": "0,00"
+    }
+  ],
+  "articles": [
+    {
+    "descripció": "Producte/article",
+    "quantitat": 1,
+    "preu": "0,00",
+    "importBase": "0,00",
+    "percentatgeIVA": "21%",
+    "importIVA": "0,00",
+    "importTotal": "0,00"
+    }
+  ],
+  "forma_pagament": "Targeta/Efectiu"
+}
+
+Regles generals:
+- Tots els imports monetaris han de ser strings amb coma decimal (ex: "12,50") i sense símbol €.
+- Els percentatges d’IVA han de ser strings amb el símbol % (ex: "21%").
+- La quantitat ha de ser numèrica (sense cometes).
+- Si un camp concret d’un article no es pot determinar, posa null només en aquell camp.
+- Si no hi ha articles detallats, retorna l’array "articles" buit.
+
+Aclariments importants:
+- "data" ha d’estar en format DD/MM/YYYY.
+- Els tiquets poden estar en català, castellà o barrejats.
+- A vegades els tiquets no tenen NIF o desglossament d’IVA: posa null en aquests camps.
+- Si hi ha diversos tipus d’IVA, inclou-los tots a l’array "impostos".
+- No afegeixis totals globals d’impostos si ja apareixen desglossats.
+- L’array "articles" ha de contenir tots els productes o serveis detallats.
+
+Correspondència de columnes habituals:
+- "descripció": pot aparèixer com descripcio, concepte, detall, producte, article o nom.
+- "quantitat": pot aparèixer com cant, unitats, uni, quantitat, QT, qty o no aparèixer.
+- "preu": pot aparèixer com preu, precio, PVP o base.
+- "importBase": pot aparèixer com base, import base, importe base o subtotal.
+- "percentatgeIVA": pot aparèixer com %IVA, tipus IVA, % IVA o %.
+- "importIVA": pot aparèixer com IVA, I.V.A., quota IVA o import IVA.
+- "importTotal": pot aparèixer com total, import, import total o total article.
+
+Casos especials:
+- Alguns articles poden estar repartits en dues files (descripció en una, quantitat i preu en una altra). Intenta combinar-los correctament.
+- Algunes línies poden ser textos explicatius (ofertes, promocions, descomptes, aclariments). Ignora-les.
+- La quantitat i el preu poden aparèixer junts (ex: "2 x 3,50"), davant de la 'x' poden portar escrit 'unitats', 'unidades' o una paraula similar, en alguns casos la 'x' pot estar enganxada a la quantitat (2x) i un separador amb un caràcter ('@', '=', '#', ...). Separa correctament quantitat i preu.
+- Si el preu inclou IVA:
+    - Només calcula import base i quota d’IVA si el percentatge d’IVA apareix explícitament al tiquet.
+    - Si no apareix el percentatge, posa null als camps relacionats amb IVA encara que indiqui "IVA inclòs".
+- La separació decimal pot ser amb coma o punt segons l’idioma del tiquet, però retorna sempre els imports amb coma.
+
+La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (Targeta, Efectiu, Bizum, Transferència, etc.).
+"""
 
         try:
             resposta = self.client.chat.completions.create(

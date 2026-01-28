@@ -2,6 +2,8 @@ import argparse
 import sys
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
 from gui import InterficieGrafica
+import os
+
 
 def executar_cli(args):
     transcriptor = TranscriptorTiquets(api_key=args.api_key)
