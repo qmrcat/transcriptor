@@ -271,5 +271,26 @@
         "tokens_input": 37829,
         "tokens_output": 405,
         "cost_usd": 0.00591735
+    },
+    {
+        "data": "2026-01-28 19:33:23",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37733,
+        "tokens_output": 405,
+        "cost_usd": 0.00590295
+    },
+    {
+        "data": "2026-01-28 20:09:23",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37733,
+        "tokens_output": 283,
+        "cost_usd": 0.00582975
+    },
+    {
+        "data": "2026-01-28 21:20:14",
+        "model": "gpt-4o-mini",
+        "tokens_input": 37733,
+        "tokens_output": 286,
+        "cost_usd": 0.00583155
     }
 ]

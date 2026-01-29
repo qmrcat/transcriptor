@@ -2,16 +2,15 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image, ImageTk
-# import os
 import os
 import json
 import pandas as pd
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
 import pdf2image
 import time
-import threading # Perquè la interfície no es bloquegi mentre esperem la IA
+import threading  # Perquè la interfície no es bloquegi mentre esperem la IA
 import winsound  # Per a Windows
-from utils import GestorConfiguracio
+from utils import GestorConfiguracio, GestorLogging
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -21,28 +20,37 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def __init__(self):
         super().__init__()
-        
-        # self.config = GestorConfiguracio.carregar_config()
-        self.config_dades = GestorConfiguracio.carregar_config()
 
-        print("InterficieGrafica - Configuració GUI:", self.config_dades)
+        # Inicialitzar logger
+        self.logger = GestorLogging.obtenir_logger("gui.InterficieGrafica")
+        self.logger.info("Iniciant interfície gràfica")
+
+        self.config_dades = GestorConfiguracio.carregar_config()
+        self.logger.debug(f"Configuració carregada: so={self.config_dades.get('enable_sound')}")
 
         self.title("Transcriptor de Tiquets Pro - Digitalització")
         self.geometry("1300x850")
         ctk.set_appearance_mode("dark")
-        
+
         # Inicialització lògica
         self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
-        # self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
-        
+
         self.ruta_fitxer_actual = None
         self.imatge_original = None
         self.zoom_level = 1.0
 
-        self.cancel·lar_proces = False
+        # Variables per a PDFs (lazy loading)
+        self.ruta_pdf_actual = None
+        self.total_pagines_pdf = 0
+        self.pagina_actual = 0
+        self.cache_pagines_pdf = {}  # Cache per pàgines ja carregades
+
+        self.cancellar_proces = False
 
         self._configurar_layout()
         self._configurar_dnd()
+
+        self.logger.info("Interfície gràfica inicialitzada correctament")
 
 
     def _configurar_layout(self):
@@ -156,7 +164,7 @@ class InterficieGrafica(TkinterDnD.Tk):
             hover_color="#c0392b", 
             width=60, 
             height=20,
-            command=self._sol·licitar_aturada
+            command=self._sollicitar_aturada
         )
         # El botó estarà amagat fins que comenci el procés
         self.btn_stop.pack_forget()
@@ -175,6 +183,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         tipus = [("Tots els documents", "*.jpg *.jpeg *.png *.webp *.pdf"), ("Imatges", "*.jpg *.jpeg *.png *.webp"), ("PDF", "*.pdf")]
         ruta = filedialog.askopenfilename(filetypes=tipus)
         if ruta:
+            self.logger.info(f"Fitxer seleccionat manualment: {ruta}")
             self.ruta_fitxer_actual = ruta
             self._mostrar_preview(ruta)
 
@@ -223,42 +232,87 @@ class InterficieGrafica(TkinterDnD.Tk):
     def _al_deixar_anar_fitxer(self, event):
         ruta = event.data.strip('{}')
         if ruta.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.pdf')):
+            self.logger.info(f"Fitxer arrossegat: {ruta}")
             self.ruta_fitxer_actual = ruta
             self._mostrar_preview(ruta)
         else:
+            self.logger.warning(f"Format no vàlid arrossegat: {ruta}")
             messagebox.showwarning("Format no vàlid", "Només acceptem imatges i PDFs.")
 
 
     def _mostrar_preview(self, ruta):
         """Carrega i mostra el document (Imatge o PDF) al canvas."""
+        self.logger.debug(f"Mostrant preview de: {ruta}")
         self.canvas_imatge.delete("all")
-        self.zoom_level = 1.0 # Reset zoom en carregar nou fitxer
+        self.zoom_level = 1.0  # Reset zoom en carregar nou fitxer
 
         try:
             if ruta.lower().endswith(".pdf"):
-                # Convertim TOTES les pàgines (ull: si el PDF és molt gran, pot tardar)
-                self.llista_pagines_pdf = pdf2image.convert_from_path(ruta)
+                self.logger.debug("Detectat PDF, iniciant lazy loading")
+                # Lazy loading: només obtenim el nombre de pàgines i carreguem la primera
+                self.ruta_pdf_actual = ruta
+                self.cache_pagines_pdf = {}  # Netejar cache anterior
+
+                # Obtenir nombre total de pàgines sense carregar-les totes
+                try:
+                    info = pdf2image.pdfinfo_from_path(ruta)
+                    self.total_pagines_pdf = info.get("Pages", 1)
+                except Exception as e:
+                    self.logger.debug(f"pdfinfo fallback: {e}")
+                    # Fallback: carregar primera pàgina per obtenir info
+                    primera = pdf2image.convert_from_path(ruta, first_page=1, last_page=1)
+                    self.total_pagines_pdf = 1 if primera else 0
+
+                self.logger.info(f"PDF carregat: {self.total_pagines_pdf} pàgines")
                 self.pagina_actual = 0
-                self.imatge_original = self.llista_pagines_pdf[0]
+                self.imatge_original = self._carregar_pagina_pdf(0)
                 self._actualitzar_status_pagines()
             else:
                 self.imatge_original = Image.open(ruta)
-                self.llista_pagines_pdf = []
+                self.logger.info(f"Imatge carregada: {self.imatge_original.size}")
+                self.ruta_pdf_actual = None
+                self.total_pagines_pdf = 0
+                self.cache_pagines_pdf = {}
                 self.lbl_pagines.configure(text="Imatge única")
 
             self._actualitzar_canvas()
-            
+
         except Exception as e:
-            self.canvas_imatge.create_text(250, 250, 
-                text=f"❌ Error de previsualització:\n{str(e)}", 
+            self.logger.error(f"Error mostrant preview: {e}", exc_info=True)
+            self.canvas_imatge.create_text(250, 250,
+                text=f"❌ Error de previsualització:\n{str(e)}",
                 fill="red", font=("Arial", 10), justify="center")
-            messagebox.showerror("Error de lectura", f"No es pot \nprevisualitzar el fitxer: {e}")
+            messagebox.showerror("Error de lectura", f"No es pot previsualitzar el fitxer: {e}")
+
+    def _carregar_pagina_pdf(self, num_pagina):
+        """Carrega una pàgina específica del PDF (lazy loading amb cache)."""
+        if num_pagina in self.cache_pagines_pdf:
+            return self.cache_pagines_pdf[num_pagina]
+
+        if not self.ruta_pdf_actual:
+            return None
+
+        # pdf2image usa índex 1-based
+        pagines = pdf2image.convert_from_path(
+            self.ruta_pdf_actual,
+            first_page=num_pagina + 1,
+            last_page=num_pagina + 1
+        )
+
+        if pagines:
+            self.cache_pagines_pdf[num_pagina] = pagines[0]
+            # Limitar cache a 5 pàgines per estalviar memòria
+            if len(self.cache_pagines_pdf) > 5:
+                oldest = min(k for k in self.cache_pagines_pdf if k != num_pagina)
+                del self.cache_pagines_pdf[oldest]
+            return pagines[0]
+        return None
 
 
     def _actualitzar_status_pagines(self):
-        total = len(self.llista_pagines_pdf)
+        total = self.total_pagines_pdf
         self.lbl_pagines.configure(text=f"Pàgina: {self.pagina_actual + 1} / {total}")
-        
+
         # Desactivar botons si no hi ha més pàgines
         self.btn_prev.configure(state="normal" if self.pagina_actual > 0 else "disabled")
         self.btn_next.configure(state="normal" if self.pagina_actual < total - 1 else "disabled")
@@ -267,15 +321,14 @@ class InterficieGrafica(TkinterDnD.Tk):
     def _pagina_anterior(self):
         if self.pagina_actual > 0:
             self.pagina_actual -= 1
-            self.imatge_original = self.llista_pagines_pdf[self.pagina_actual]
+            self.imatge_original = self._carregar_pagina_pdf(self.pagina_actual)
             self._actualitzar_status_pagines()
             self._actualitzar_canvas()
 
-
     def _pagina_seguent(self):
-        if self.pagina_actual < len(self.llista_pagines_pdf) - 1:
+        if self.pagina_actual < self.total_pagines_pdf - 1:
             self.pagina_actual += 1
-            self.imatge_original = self.llista_pagines_pdf[self.pagina_actual]
+            self.imatge_original = self._carregar_pagina_pdf(self.pagina_actual)
             self._actualitzar_status_pagines()
             self._actualitzar_canvas()      
 
@@ -310,21 +363,56 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _processar_fitxer(self):
         if not self.ruta_fitxer_actual:
+            self.logger.warning("Intent de processar sense fitxer seleccionat")
             messagebox.showwarning("Atenció", "Selecciona un document primer.")
             return
+
+        # Validació prèvia segons el mètode seleccionat
+        metode = self.metode_var.get()
+        self.logger.info(f"Iniciant processament amb mètode: {metode}")
+
+        if metode == "openai" and not self.transcriptor.client:
+            self.logger.error("Intent d'usar OpenAI sense API key")
+            messagebox.showerror(
+                "API Key no configurada",
+                "Per utilitzar OpenAI, configura OPENAI_API_KEY al fitxer .env o config.json"
+            )
+            return
+
+        if metode == "ollama":
+            # Comprovació ràpida de connexió amb Ollama
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex(('localhost', 11434))
+                sock.close()
+                if result != 0:
+                    self.logger.error("Ollama no disponible a localhost:11434")
+                    messagebox.showerror(
+                        "Ollama no disponible",
+                        "No es pot connectar amb el servidor Ollama a localhost:11434.\n"
+                        "Assegura't que Ollama estigui en execució."
+                    )
+                    return
+                self.logger.debug("Connexió amb Ollama verificada")
+            except Exception as e:
+                self.logger.debug(f"Comprovació Ollama fallida (ignorant): {e}")
+
+        self.logger.info(f"Processant fitxer: {self.ruta_fitxer_actual}")
 
         # 1. Preparem la interfície per a l'espera
         self.btn_processar.configure(state="disabled", text="PROCESSANT...")
         self.progress_bar.pack(fill="x", pady=5)
-        self.progress_bar.start() # Activa l'animació de "spinner"
+        self.progress_bar.start()  # Activa l'animació de "spinner"
         self.txt_resultat.delete("1.0", "end")
         self.txt_resultat.insert("end", "⏳ Connectant amb el servidor de IA...")
-        
+
         # 2. Iniciem el cronòmetre i el fil de processament
         self.inici_temps = time.time()
         self.processant = True
         self._actualitzar_cronometre_visual()
-        
+
         # Executem la IA en un fil a part perquè la GUI no es congeli
         thread = threading.Thread(target=self._executar_logica_ia)
         thread.start()
@@ -341,7 +429,8 @@ class InterficieGrafica(TkinterDnD.Tk):
     def _executar_logica_ia(self):
         """Aquest mètode corre en segon pla."""
         metode = self.metode_var.get()
-        # ruta = self.ruta_fitxer_actual [cite: 1]
+        self.logger.debug(f"Fil de processament iniciat (mètode: {metode})")
+
         try:
             if metode == "ocr":
                 res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
@@ -349,23 +438,25 @@ class InterficieGrafica(TkinterDnD.Tk):
                 res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
             elif metode == "ollama":
                 res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
-            
+
+            self.logger.debug("Processament completat, tornant al fil principal")
             # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
             self.after(0, lambda: self._finalitzar_processament(res))
-            
+
         except Exception as e:
+            self.logger.error(f"Error en fil de processament: {e}", exc_info=True)
             self.after(0, lambda: self._finalitzar_processament({"error": str(e)}))
 
-    def _sol·licitar_aturada(self):
+    def _sollicitar_aturada(self):
         """Activa la bandera per aturar el processament per lots."""
-        self.cancel·lar_proces = True
+        self.cancellar_proces = True
         self.btn_stop.configure(text="Aturant...", state="disabled")
 
 
     # def _executar_logica_ia(self):
     #     metode = self.metode_var.get()
     #     resultats_acumulats = []
-    #     self.cancel·lar_proces = False # Reset al començar
+    #     self.cancellar_proces = False # Reset al començar
         
     #     # Mostrem el botó d'aturar al fil principal
     #     self.after(0, lambda: self.btn_stop.pack(side="left", padx=5))
@@ -374,7 +465,7 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     #     for i, ruta in enumerate(fitxers):
     #         # COMPROVACIÓ D'ATURADA: Si l'usuari ha premut Stop, sortim del bucle
-    #         if self.cancel·lar_proces:
+    #         if self.cancellar_proces:
     #             self.after(0, lambda: self.txt_resultat.insert("end", "\n🛑 Procés cancel·lat per l'usuari.\n"))
     #             break
 
@@ -422,20 +513,26 @@ class InterficieGrafica(TkinterDnD.Tk):
         """Restaura la interfície i mostra el resultat final."""
         self.processant = False
         temps_final = time.time() - self.inici_temps
-        
+
+        # Verificar si hi ha error
+        if isinstance(resultat, dict) and "error" in resultat:
+            self.logger.error(f"Processament finalitzat amb error: {resultat['error']}")
+        else:
+            self.logger.info(f"Processament completat en {temps_final:.2f}s")
+
         self.progress_bar.stop()
-        self.progress_bar.pack_forget() # Amaguem la barra
+        self.progress_bar.pack_forget()  # Amaguem la barra
         self.btn_processar.configure(state="normal", text="🚀 ANALITZAR DOCUMENT")
 
-        self.btn_stop.pack_forget() # Amaguem el botó Stop
+        self.btn_stop.pack_forget()  # Amaguem el botó Stop
         self.btn_stop.configure(text="Aturar", state="normal")
-        
+
         self.txt_resultat.delete("1.0", "end")
         if isinstance(resultat, dict):
             self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
         else:
             self.txt_resultat.insert("end", str(resultat))
-        
+
         self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
 
         # REPRODUIR SO DE FINALITZACIÓ
@@ -482,6 +579,7 @@ class InterficieGrafica(TkinterDnD.Tk):
 
 
     def _exportar_excel(self):
+        self.logger.debug("Iniciant exportació a Excel")
         contingut = self.txt_resultat.get("1.0", "end").strip()
         try:
             dades = json.loads(contingut)
@@ -489,9 +587,20 @@ class InterficieGrafica(TkinterDnD.Tk):
             ruta = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
             if ruta:
                 df.to_excel(ruta, index=False)
+                self.logger.info(f"Excel exportat correctament: {ruta}")
                 messagebox.showinfo("Èxit", "Dades exportades correctament a Excel.")
-        except:
-            messagebox.showerror("Error d'exportació", "Només es poden exportar resultats en format JSON (mètode IA).")
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error JSON en exportació: {e}")
+            messagebox.showerror("Error d'exportació", "El contingut no és JSON vàlid. Utilitza el mètode IA per obtenir resultats exportables.")
+        except (KeyError, TypeError) as e:
+            self.logger.error(f"Error de format en exportació: {e}")
+            messagebox.showerror("Error d'exportació", f"Format de dades incorrecte: {e}")
+        except PermissionError as e:
+            self.logger.error(f"Error de permisos en exportació: {e}")
+            messagebox.showerror("Error d'exportació", "No es pot escriure al fitxer. Comprova que no estigui obert.")
+        except Exception as e:
+            self.logger.error(f"Error inesperat en exportació: {e}", exc_info=True)
+            messagebox.showerror("Error d'exportació", f"Error inesperat: {e}")
 
 
     def _netejar(self):
@@ -502,4 +611,9 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.imatge_original = None
         self.zoom_level = 1.0
         self.lbl_zoom.configure(text="100%")
+        # Netejar variables PDF
+        self.ruta_pdf_actual = None
+        self.total_pagines_pdf = 0
+        self.pagina_actual = 0
+        self.cache_pagines_pdf = {}
 

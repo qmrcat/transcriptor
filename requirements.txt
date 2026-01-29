@@ -6,3 +6,7 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 tkinterdnd2-universal>=1.7.3
 pandas
+pygame
+
+# Dev dependencies
+pytest>=7.0.0
