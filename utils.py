@@ -489,6 +489,182 @@ class GestorConfiguracio:
 
         return config
 
+# =============================================================================
+# GESTIÓ DE PLANTILLES
+# =============================================================================
+
+class GestorPlantilles:
+    """Gestiona les plantilles de documents (tiquets, factures, albarans)."""
+
+    CARPETA_PLANTILLES = "plantilles"
+    CARPETA_DOCUMENTS = os.path.join(CARPETA_PLANTILLES, "documents")
+    FITXER_PLANTILLES = os.path.join(CARPETA_PLANTILLES, "plantilles.json")
+
+    def __init__(self):
+        self.logger = GestorLogging.obtenir_logger("utils.GestorPlantilles")
+        self._assegurar_carpetes()
+        self.logger.debug("GestorPlantilles inicialitzat")
+
+    def _assegurar_carpetes(self):
+        """Crea les carpetes necessàries si no existeixen."""
+        for carpeta in [self.CARPETA_PLANTILLES, self.CARPETA_DOCUMENTS]:
+            if not os.path.exists(carpeta):
+                os.makedirs(carpeta)
+                self.logger.info(f"Carpeta creada: {carpeta}")
+
+    def _carregar_plantilles(self):
+        """Carrega totes les plantilles del fitxer JSON."""
+        if not os.path.exists(self.FITXER_PLANTILLES):
+            return {}
+        try:
+            with open(self.FITXER_PLANTILLES, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            self.logger.error(f"Error carregant plantilles: {e}")
+            return {}
+
+    def _desar_plantilles(self, plantilles):
+        """Desa totes les plantilles al fitxer JSON."""
+        try:
+            with open(self.FITXER_PLANTILLES, "w", encoding="utf-8") as f:
+                json.dump(plantilles, f, indent=4, ensure_ascii=False)
+            self.logger.debug("Plantilles desades correctament")
+        except Exception as e:
+            self.logger.error(f"Error desant plantilles: {e}")
+            raise
+
+    def llistar_plantilles(self):
+        """Retorna una llista de totes les plantilles disponibles."""
+        plantilles = self._carregar_plantilles()
+        return [
+            {
+                "id": pid,
+                "nom": p.get("nom", "Sense nom"),
+                "descripcio": p.get("descripcio", ""),
+                "metode": p.get("metode", ""),
+                "tipus": p.get("tipus", "general")
+            }
+            for pid, p in plantilles.items()
+        ]
+
+    def obtenir_plantilla(self, plantilla_id):
+        """Obté una plantilla pel seu ID."""
+        plantilles = self._carregar_plantilles()
+        return plantilles.get(plantilla_id)
+
+    def desar_plantilla(self, nom, descripcio, metode, model, instruccions_extra,
+                        document_original=None, tipus="general", plantilla_id=None):
+        """
+        Desa o actualitza una plantilla.
+
+        Args:
+            nom: Nom de la plantilla
+            descripcio: Descripció del tipus de document
+            metode: Mètode d'extracció (ocr, openai, claude, ollama)
+            model: Model utilitzat (gpt-4o-mini, claude-sonnet-4-20250514, etc.)
+            instruccions_extra: Instruccions addicionals per al prompt
+            document_original: Ruta al document de referència (es copiarà)
+            tipus: Tipus de document (tiquet, factura, albara, general)
+            plantilla_id: ID existent per actualitzar, o None per crear nova
+
+        Returns:
+            ID de la plantilla desada
+        """
+        plantilles = self._carregar_plantilles()
+        ara = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Generar ID si és nova
+        if plantilla_id is None:
+            # Crear ID basat en el nom (slug)
+            plantilla_id = self._generar_id(nom)
+            # Assegurar que és únic
+            base_id = plantilla_id
+            comptador = 1
+            while plantilla_id in plantilles:
+                plantilla_id = f"{base_id}_{comptador}"
+                comptador += 1
+
+        # Copiar document de referència si s'ha proporcionat
+        document_referencia = None
+        if document_original and os.path.exists(document_original):
+            ext = os.path.splitext(document_original)[1]
+            nom_document = f"{plantilla_id}{ext}"
+            ruta_desti = os.path.join(self.CARPETA_DOCUMENTS, nom_document)
+            try:
+                shutil.copy2(document_original, ruta_desti)
+                document_referencia = nom_document
+                self.logger.info(f"Document de referència copiat: {nom_document}")
+            except Exception as e:
+                self.logger.error(f"Error copiant document: {e}")
+
+        # Crear o actualitzar plantilla
+        es_nova = plantilla_id not in plantilles
+        plantilla = {
+            "nom": nom,
+            "descripcio": descripcio,
+            "tipus": tipus,
+            "metode": metode,
+            "model": model,
+            "instruccions_extra": instruccions_extra or "",
+            "document_referencia": document_referencia or plantilles.get(plantilla_id, {}).get("document_referencia"),
+            "data_creacio": plantilles.get(plantilla_id, {}).get("data_creacio", ara),
+            "data_modificacio": ara
+        }
+
+        plantilles[plantilla_id] = plantilla
+        self._desar_plantilles(plantilles)
+
+        accio = "creada" if es_nova else "actualitzada"
+        self.logger.info(f"Plantilla {accio}: {nom} (ID: {plantilla_id})")
+        return plantilla_id
+
+    def eliminar_plantilla(self, plantilla_id):
+        """Elimina una plantilla i el seu document de referència."""
+        plantilles = self._carregar_plantilles()
+        if plantilla_id not in plantilles:
+            return False
+
+        plantilla = plantilles[plantilla_id]
+
+        # Eliminar document de referència si existeix
+        if plantilla.get("document_referencia"):
+            ruta_doc = os.path.join(self.CARPETA_DOCUMENTS, plantilla["document_referencia"])
+            if os.path.exists(ruta_doc):
+                try:
+                    os.remove(ruta_doc)
+                    self.logger.debug(f"Document eliminat: {ruta_doc}")
+                except Exception as e:
+                    self.logger.warning(f"No s'ha pogut eliminar document: {e}")
+
+        del plantilles[plantilla_id]
+        self._desar_plantilles(plantilles)
+        self.logger.info(f"Plantilla eliminada: {plantilla_id}")
+        return True
+
+    def obtenir_ruta_document(self, plantilla_id):
+        """Obté la ruta completa al document de referència d'una plantilla."""
+        plantilla = self.obtenir_plantilla(plantilla_id)
+        if plantilla and plantilla.get("document_referencia"):
+            return os.path.join(self.CARPETA_DOCUMENTS, plantilla["document_referencia"])
+        return None
+
+    def _generar_id(self, nom):
+        """Genera un ID vàlid a partir del nom."""
+        import re
+        # Convertir a minúscules, reemplaçar espais i caràcters especials
+        slug = nom.lower()
+        slug = re.sub(r'[àáâãäå]', 'a', slug)
+        slug = re.sub(r'[èéêë]', 'e', slug)
+        slug = re.sub(r'[ìíîï]', 'i', slug)
+        slug = re.sub(r'[òóôõö]', 'o', slug)
+        slug = re.sub(r'[ùúûü]', 'u', slug)
+        slug = re.sub(r'[ç]', 'c', slug)
+        slug = re.sub(r'[ñ]', 'n', slug)
+        slug = re.sub(r'[^a-z0-9]+', '_', slug)
+        slug = slug.strip('_')
+        return slug or "plantilla"
+
+
 class CalculadoraCostos:
     def __init__(self):
         self.fitxer_historial = "historial_costos.json"

@@ -6,6 +6,7 @@ import os
 import base64
 import tempfile
 from openai import OpenAI
+import anthropic
 from dotenv import load_dotenv
 from utils import GestorLogging, mesurar_temps, log_excepcions
 
@@ -33,6 +34,14 @@ class TranscriptorTiquets:
             api_key="ollama"  # Ollama no necessita clau real, però la llibreria la demana
         )
         self.logger.debug(f"Client Ollama configurat (url: {ollama_url})")
+
+        # Client per Claude (Anthropic)
+        self.claude_api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.client_claude = anthropic.Anthropic(api_key=self.claude_api_key) if self.claude_api_key else None
+        if self.client_claude:
+            self.logger.info("Client Claude (Anthropic) configurat")
+        else:
+            self.logger.warning("Client Claude no configurat - falta ANTHROPIC_API_KEY")
 
     # Prompt compartit per OpenAI i Ollama
     PROMPT_SISTEMA = """Ets un expert en comptabilitat i digitalització de documents.
@@ -159,8 +168,15 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
             self.logger.error(f"Error en OCR: {e}")
             raise
 
+    def _construir_prompt(self, instruccions_extra=None):
+        """Construeix el prompt complet amb instruccions addicionals si n'hi ha."""
+        prompt = self.PROMPT_SISTEMA
+        if instruccions_extra:
+            prompt += f"\n\nINSTRUCCIONS ADDICIONALS DE L'USUARI:\n{instruccions_extra}"
+        return prompt
+
     @mesurar_temps("processament_openai")
-    def processar_amb_openai(self, ruta_imatge, text_ocr=None):
+    def processar_amb_openai(self, ruta_imatge, text_ocr=None, instruccions_extra=None):
         """Implementació real d'OpenAI Vision per extreure JSON estructurat."""
         self.logger.info(f"Processant amb OpenAI: {ruta_imatge}")
 
@@ -176,7 +192,8 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
             return {"error": str(e)}
 
         model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-        self.logger.debug(f"Enviant petició a OpenAI (model: {model})")
+        prompt_final = self._construir_prompt(instruccions_extra)
+        self.logger.debug(f"Enviant petició a OpenAI (model: {model}, instruccions_extra: {bool(instruccions_extra)})")
 
         try:
             resposta = self.client.chat.completions.create(
@@ -185,7 +202,7 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": self.PROMPT_SISTEMA},
+                            {"type": "text", "text": prompt_final},
                             {
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
@@ -218,7 +235,7 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
             self._netejar_fitxer_temporal(ruta_temporal)
     
     @mesurar_temps("processament_ollama")
-    def processar_amb_ollama(self, ruta_imatge):
+    def processar_amb_ollama(self, ruta_imatge, instruccions_extra=None):
         """Processament mitjançant Ollama Local (Gratuït i Privat)."""
         self.logger.info(f"Processant amb Ollama: {ruta_imatge}")
 
@@ -230,7 +247,8 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
             return {"error": str(e)}
 
         model = os.getenv("OLLAMA_MODEL") or "llama3.2-vision"
-        self.logger.debug(f"Enviant petició a Ollama (model: {model})")
+        prompt_final = self._construir_prompt(instruccions_extra)
+        self.logger.debug(f"Enviant petició a Ollama (model: {model}, instruccions_extra: {bool(instruccions_extra)})")
 
         try:
             resposta = self.client_ollama.chat.completions.create(
@@ -239,7 +257,7 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": self.PROMPT_SISTEMA},
+                            {"type": "text", "text": prompt_final},
                             {
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
@@ -262,13 +280,112 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
         finally:
             self._netejar_fitxer_temporal(ruta_temporal)
 
+    @mesurar_temps("processament_claude")
+    def processar_amb_claude(self, ruta_imatge, instruccions_extra=None):
+        """Processament mitjançant Claude Vision (Anthropic)."""
+        self.logger.info(f"Processant amb Claude: {ruta_imatge}")
+
+        if not self.client_claude:
+            self.logger.error("Intent de processar sense API key de Claude configurada")
+            return {"error": "API Key de Claude no configurada al fitxer .env (ANTHROPIC_API_KEY)."}
+
+        ruta_temporal = None
+        try:
+            base64_image, ruta_temporal = self._preparar_imatge_per_api(ruta_imatge)
+        except ValueError as e:
+            self.logger.error(f"Error preparant imatge per Claude: {e}")
+            return {"error": str(e)}
+
+        model = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-4-20250514"
+        prompt_final = self._construir_prompt(instruccions_extra)
+        self.logger.debug(f"Enviant petició a Claude (model: {model}, instruccions_extra: {bool(instruccions_extra)})")
+
+        try:
+            # Determinar el tipus MIME de la imatge
+            ext = os.path.splitext(ruta_imatge)[1].lower()
+            media_types = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".gif": "image/gif"
+            }
+            media_type = media_types.get(ext, "image/jpeg")
+
+            resposta = self.client_claude.messages.create(
+                model=model,
+                max_tokens=1024,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": base64_image
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt_final
+                            }
+                        ]
+                    }
+                ]
+            )
+
+            contingut = resposta.content[0].text
+            tokens_in = resposta.usage.input_tokens
+            tokens_out = resposta.usage.output_tokens
+
+            self.logger.info(f"Claude resposta rebuda: tokens_in={tokens_in}, tokens_out={tokens_out}")
+
+            if hasattr(self, 'registrar_cost'):
+                self.registrar_cost(model, tokens_in, tokens_out)
+
+            # Netejar blocs de codi markdown si Claude els afegeix
+            contingut_net = contingut.strip()
+            if contingut_net.startswith("```json"):
+                contingut_net = contingut_net[7:]  # Eliminar ```json
+            elif contingut_net.startswith("```"):
+                contingut_net = contingut_net[3:]  # Eliminar ```
+            if contingut_net.endswith("```"):
+                contingut_net = contingut_net[:-3]  # Eliminar ``` final
+            contingut_net = contingut_net.strip()
+
+            resultat = json.loads(contingut_net)
+            self.logger.debug(f"JSON parsejat correctament: {list(resultat.keys())}")
+            return resultat
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error parsejant JSON de Claude: {e}")
+            return {"error": f"La resposta de Claude no és JSON vàlid: {contingut[:200]}..."}
+
+        except Exception as e:
+            self.logger.error(f"Error en crida a Claude: {e}", exc_info=True)
+            return {"error": f"Error en la crida a Claude: {str(e)}"}
+
+        finally:
+            self._netejar_fitxer_temporal(ruta_temporal)
+
 class TranscriptorAmbCostos(TranscriptorTiquets):
     def __init__(self, api_key=None):
         super().__init__(api_key)
         from utils import CalculadoraCostos
         self.gestor_costos = CalculadoraCostos()
-        # Preus per 1M de tokens
-        self.preus = {"gpt-4o-mini": {"input": 0.15 / 1e6, "output": 0.60 / 1e6}}
+        # Preus per 1M de tokens (convertits a per token)
+        self.preus = {
+            # OpenAI
+            "gpt-4o-mini": {"input": 0.15 / 1e6, "output": 0.60 / 1e6},
+            "gpt-4o": {"input": 2.50 / 1e6, "output": 10.00 / 1e6},
+            # Claude (Anthropic)
+            "claude-sonnet-4-20250514": {"input": 3.00 / 1e6, "output": 15.00 / 1e6},
+            "claude-3-5-sonnet-20241022": {"input": 3.00 / 1e6, "output": 15.00 / 1e6},
+            "claude-3-haiku-20240307": {"input": 0.25 / 1e6, "output": 1.25 / 1e6},
+            "claude-3-opus-20240229": {"input": 15.00 / 1e6, "output": 75.00 / 1e6},
+        }
         self.logger.info("TranscriptorAmbCostos inicialitzat amb seguiment de costos")
 
     def registrar_cost(self, model, tokens_in, tokens_out):

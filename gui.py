@@ -10,7 +10,7 @@ import pdf2image
 import time
 import threading  # Perquè la interfície no es bloquegi mentre esperem la IA
 import winsound  # Per a Windows
-from utils import GestorConfiguracio, GestorLogging
+from utils import GestorConfiguracio, GestorLogging, GestorPlantilles
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -30,10 +30,14 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         self.title("Transcriptor de Tiquets Pro - Digitalització")
         self.geometry("1300x850")
+        self.state('zoomed')  # Maximitzar finestra a l'inici
         ctk.set_appearance_mode("dark")
 
         # Inicialització lògica
         self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
+        self.gestor_plantilles = GestorPlantilles()
+        self.plantilla_actual_id = None  # ID de la plantilla seleccionada
+        self._estat_finestra_anterior = 'zoomed'  # Estat per defecte
 
         self.ruta_fitxer_actual = None
         self.imatge_original = None
@@ -129,6 +133,44 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.frame_dret = ctk.CTkFrame(self)
         self.frame_dret.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
+        # Selector de Plantilles
+        self.frame_plantilles = ctk.CTkFrame(self.frame_dret)
+        self.frame_plantilles.pack(pady=10, padx=15, fill="x")
+
+        ctk.CTkLabel(self.frame_plantilles, text="Plantilla:", font=("Arial", 12, "bold")).pack(side="left", padx=(15, 10))
+
+        self.plantilla_var = ctk.StringVar(value="Cap (configuració manual)")
+        self.combo_plantilles = ctk.CTkComboBox(
+            self.frame_plantilles,
+            variable=self.plantilla_var,
+            values=["Cap (configuració manual)"],
+            width=250,
+            command=self._on_plantilla_seleccionada
+        )
+        self.combo_plantilles.pack(side="left", padx=5)
+        self._actualitzar_llista_plantilles()
+
+        self.btn_desar_plantilla = ctk.CTkButton(
+            self.frame_plantilles, text="💾 Desar", width=80,
+            command=self._mostrar_dialeg_desar_plantilla
+        )
+        self.btn_desar_plantilla.pack(side="left", padx=5)
+
+        self.btn_veure_doc_ref = ctk.CTkButton(
+            self.frame_plantilles, text="👁 Doc. Ref.", width=90,
+            command=self._veure_document_referencia,
+            state="disabled"
+        )
+        self.btn_veure_doc_ref.pack(side="left", padx=5)
+
+        self.btn_eliminar_plantilla = ctk.CTkButton(
+            self.frame_plantilles, text="🗑", width=30,
+            fg_color="#e74c3c", hover_color="#c0392b",
+            command=self._eliminar_plantilla_actual,
+            state="disabled"
+        )
+        self.btn_eliminar_plantilla.pack(side="left", padx=5)
+
         # Selector de Mètode
         self.radio_frame = ctk.CTkFrame(self.frame_dret)
         self.radio_frame.pack(pady=15, padx=15, fill="x")
@@ -136,7 +178,20 @@ class InterficieGrafica(TkinterDnD.Tk):
         ctk.CTkLabel(self.radio_frame, text="Mètode d'extracció:", font=("Arial", 12, "bold")).pack(side="left", padx=15)
         ctk.CTkRadioButton(self.radio_frame, text="OCR Local", variable=self.metode_var, value="ocr").pack(side="left", padx=10)
         ctk.CTkRadioButton(self.radio_frame, text="IA (OpenAI)", variable=self.metode_var, value="openai").pack(side="left", padx=10)
+        ctk.CTkRadioButton(self.radio_frame, text="IA (Claude)", variable=self.metode_var, value="claude").pack(side="left", padx=10)
         ctk.CTkRadioButton(self.radio_frame, text="Ollama (Local)", variable=self.metode_var, value="ollama").pack(side="left", padx=10)
+
+        # Instruccions addicionals per al prompt
+        self.frame_instruccions = ctk.CTkFrame(self.frame_dret)
+        self.frame_instruccions.pack(pady=10, padx=15, fill="x")
+        ctk.CTkLabel(self.frame_instruccions, text="Instruccions addicionals (opcional):", font=("Arial", 11)).pack(anchor="w", padx=5)
+        self.txt_instruccions = ctk.CTkTextbox(self.frame_instruccions, height=60, font=("Consolas", 11))
+        self.txt_instruccions.pack(fill="x", padx=5, pady=5)
+        self.txt_instruccions.insert("1.0", "")
+        # Placeholder amb text d'ajuda
+        self.txt_instruccions.bind("<FocusIn>", self._on_instruccions_focus_in)
+        self.txt_instruccions.bind("<FocusOut>", self._on_instruccions_focus_out)
+        self._mostrar_placeholder_instruccions()
 
         # Àrea de resultats
         self.txt_resultat = ctk.CTkTextbox(self.frame_dret, font=("Consolas", 12), border_width=2)
@@ -379,6 +434,14 @@ class InterficieGrafica(TkinterDnD.Tk):
             )
             return
 
+        if metode == "claude" and not self.transcriptor.client_claude:
+            self.logger.error("Intent d'usar Claude sense API key")
+            messagebox.showerror(
+                "API Key no configurada",
+                "Per utilitzar Claude, configura ANTHROPIC_API_KEY al fitxer .env"
+            )
+            return
+
         if metode == "ollama":
             # Comprovació ràpida de connexió amb Ollama
             try:
@@ -429,15 +492,18 @@ class InterficieGrafica(TkinterDnD.Tk):
     def _executar_logica_ia(self):
         """Aquest mètode corre en segon pla."""
         metode = self.metode_var.get()
-        self.logger.debug(f"Fil de processament iniciat (mètode: {metode})")
+        instruccions = self._obtenir_instruccions_usuari()
+        self.logger.debug(f"Fil de processament iniciat (mètode: {metode}, instruccions: {bool(instruccions)})")
 
         try:
             if metode == "ocr":
                 res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
             elif metode == "openai":
-                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual)
+                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual, instruccions_extra=instruccions)
+            elif metode == "claude":
+                res = self.transcriptor.processar_amb_claude(self.ruta_fitxer_actual, instruccions_extra=instruccions)
             elif metode == "ollama":
-                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual)
+                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual, instruccions_extra=instruccions)
 
             self.logger.debug("Processament completat, tornant al fil principal")
             # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
@@ -616,4 +682,292 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.total_pagines_pdf = 0
         self.pagina_actual = 0
         self.cache_pagines_pdf = {}
+        # Netejar instruccions
+        self.txt_instruccions.delete("1.0", "end")
+        self._mostrar_placeholder_instruccions()
+        # Resetejar plantilla
+        self.plantilla_actual_id = None
+        self.plantilla_var.set("Cap (configuració manual)")
+        self.btn_veure_doc_ref.configure(state="disabled")
+        self.btn_eliminar_plantilla.configure(state="disabled")
+
+    # Gestió del placeholder per instruccions
+    def _mostrar_placeholder_instruccions(self):
+        """Mostra el text d'ajuda (placeholder) al camp d'instruccions."""
+        self.placeholder_instruccions = "Ex: El preu ja inclou IVA, ignora la columna descompte..."
+        self.txt_instruccions.delete("1.0", "end")
+        self.txt_instruccions.insert("1.0", self.placeholder_instruccions)
+        self.txt_instruccions.configure(text_color="gray")
+
+    def _on_instruccions_focus_in(self, event):
+        """Esborra el placeholder quan l'usuari fa clic al camp."""
+        if self.txt_instruccions.get("1.0", "end").strip() == self.placeholder_instruccions:
+            self.txt_instruccions.delete("1.0", "end")
+            self.txt_instruccions.configure(text_color="white")
+
+    def _on_instruccions_focus_out(self, event):
+        """Restaura el placeholder si el camp queda buit."""
+        if not self.txt_instruccions.get("1.0", "end").strip():
+            self._mostrar_placeholder_instruccions()
+
+    def _obtenir_instruccions_usuari(self):
+        """Retorna les instruccions de l'usuari o None si només hi ha el placeholder."""
+        text = self.txt_instruccions.get("1.0", "end").strip()
+        if text and text != self.placeholder_instruccions:
+            return text
+        return None
+
+    # =========================================================================
+    # GESTIÓ DE PLANTILLES
+    # =========================================================================
+
+    def _actualitzar_llista_plantilles(self):
+        """Actualitza el combobox amb les plantilles disponibles."""
+        plantilles = self.gestor_plantilles.llistar_plantilles()
+        valors = ["Cap (configuració manual)"]
+        self._mapa_plantilles = {"Cap (configuració manual)": None}
+
+        for p in plantilles:
+            text = f"{p['nom']} ({p['metode']})"
+            valors.append(text)
+            self._mapa_plantilles[text] = p['id']
+
+        self.combo_plantilles.configure(values=valors)
+        self.logger.debug(f"Llista de plantilles actualitzada: {len(plantilles)} plantilles")
+
+    def _on_plantilla_seleccionada(self, seleccio):
+        """Carrega la plantilla seleccionada i omple els camps."""
+        plantilla_id = self._mapa_plantilles.get(seleccio)
+        self.plantilla_actual_id = plantilla_id
+
+        if plantilla_id is None:
+            # Configuració manual - netejar camps
+            self.btn_veure_doc_ref.configure(state="disabled")
+            self.btn_eliminar_plantilla.configure(state="disabled")
+            return
+
+        plantilla = self.gestor_plantilles.obtenir_plantilla(plantilla_id)
+        if not plantilla:
+            return
+
+        self.logger.info(f"Plantilla carregada: {plantilla['nom']}")
+
+        # Aplicar mètode d'extracció
+        metode = plantilla.get("metode", "ocr")
+        if metode in ["ocr", "openai", "claude", "ollama"]:
+            self.metode_var.set(metode)
+
+        # Aplicar instruccions addicionals
+        instruccions = plantilla.get("instruccions_extra", "")
+        self.txt_instruccions.delete("1.0", "end")
+        if instruccions:
+            self.txt_instruccions.configure(text_color="white")
+            self.txt_instruccions.insert("1.0", instruccions)
+        else:
+            self._mostrar_placeholder_instruccions()
+
+        # Activar/desactivar botons
+        te_document = bool(plantilla.get("document_referencia"))
+        self.btn_veure_doc_ref.configure(state="normal" if te_document else "disabled")
+        self.btn_eliminar_plantilla.configure(state="normal")
+
+        # Mostrar descripció
+        if plantilla.get("descripcio"):
+            messagebox.showinfo(
+                f"Plantilla: {plantilla['nom']}",
+                f"Descripció: {plantilla['descripcio']}\n\n"
+                f"Mètode: {plantilla['metode']}\n"
+                f"Model: {plantilla.get('model', 'Per defecte')}"
+            )
+
+    def _mostrar_dialeg_desar_plantilla(self):
+        """Mostra el diàleg per desar una nova plantilla o actualitzar l'existent."""
+        # Desar l'estat actual de la finestra principal
+        self._estat_finestra_anterior = self.state()
+
+        dialeg = ctk.CTkToplevel(self)
+        dialeg.title("Desar Plantilla")
+        dialeg.geometry("500x450")
+        dialeg.resizable(False, False)
+        dialeg.attributes('-topmost', True)  # Mantenir al davant
+
+        # Centrar el diàleg
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 500) // 2
+        y = self.winfo_y() + (self.winfo_height() - 450) // 2
+        dialeg.geometry(f"500x450+{x}+{y}")
+
+        # Donar focus al diàleg després que estigui visible
+        def _activar_dialeg():
+            dialeg.attributes('-topmost', False)  # Treure topmost després d'activar
+            dialeg.lift()
+            dialeg.focus_force()
+
+        dialeg.after(50, _activar_dialeg)
+
+        # Obtenir dades actuals per pre-omplir
+        plantilla_existent = None
+        if self.plantilla_actual_id:
+            plantilla_existent = self.gestor_plantilles.obtenir_plantilla(self.plantilla_actual_id)
+
+        # Nom de la plantilla
+        ctk.CTkLabel(dialeg, text="Nom de la plantilla:", font=("Arial", 12, "bold")).pack(pady=(20, 5), padx=20, anchor="w")
+        entry_nom = ctk.CTkEntry(dialeg, width=450)
+        entry_nom.pack(padx=20)
+        if plantilla_existent:
+            entry_nom.insert(0, plantilla_existent.get("nom", ""))
+
+        # Descripció
+        ctk.CTkLabel(dialeg, text="Descripció:", font=("Arial", 12, "bold")).pack(pady=(15, 5), padx=20, anchor="w")
+        txt_descripcio = ctk.CTkTextbox(dialeg, height=80, width=450)
+        txt_descripcio.pack(padx=20)
+        if plantilla_existent:
+            txt_descripcio.insert("1.0", plantilla_existent.get("descripcio", ""))
+
+        # Tipus de document
+        ctk.CTkLabel(dialeg, text="Tipus de document:", font=("Arial", 12, "bold")).pack(pady=(15, 5), padx=20, anchor="w")
+        tipus_var = ctk.StringVar(value=plantilla_existent.get("tipus", "general") if plantilla_existent else "general")
+        frame_tipus = ctk.CTkFrame(dialeg, fg_color="transparent")
+        frame_tipus.pack(padx=20, anchor="w")
+        for tipus, text in [("tiquet", "Tiquet"), ("factura", "Factura"), ("albara", "Albarà"), ("general", "General")]:
+            ctk.CTkRadioButton(frame_tipus, text=text, variable=tipus_var, value=tipus).pack(side="left", padx=10)
+
+        # Checkbox per desar document de referència
+        desar_doc_var = ctk.BooleanVar(value=True)
+        if self.ruta_fitxer_actual:
+            ctk.CTkCheckBox(
+                dialeg,
+                text=f"Desar document de referència: {os.path.basename(self.ruta_fitxer_actual)}",
+                variable=desar_doc_var
+            ).pack(pady=(15, 5), padx=20, anchor="w")
+        else:
+            ctk.CTkLabel(dialeg, text="⚠ No hi ha cap document carregat per usar com a referència", text_color="orange").pack(pady=(15, 5), padx=20, anchor="w")
+
+        # Model actual
+        metode_actual = self.metode_var.get()
+        model_actual = self._obtenir_model_actual(metode_actual)
+        ctk.CTkLabel(dialeg, text=f"Mètode: {metode_actual} | Model: {model_actual}", text_color="gray").pack(pady=(15, 5), padx=20, anchor="w")
+
+        # Botons
+        frame_botons = ctk.CTkFrame(dialeg, fg_color="transparent")
+        frame_botons.pack(pady=20, fill="x", padx=20)
+
+        def _desar():
+            nom = entry_nom.get().strip()
+            if not nom:
+                messagebox.showwarning("Atenció", "Has d'introduir un nom per la plantilla.")
+                return
+
+            descripcio = txt_descripcio.get("1.0", "end").strip()
+            instruccions = self._obtenir_instruccions_usuari()
+            document = self.ruta_fitxer_actual if desar_doc_var.get() else None
+
+            try:
+                plantilla_id = self.gestor_plantilles.desar_plantilla(
+                    nom=nom,
+                    descripcio=descripcio,
+                    metode=metode_actual,
+                    model=model_actual,
+                    instruccions_extra=instruccions,
+                    document_original=document,
+                    tipus=tipus_var.get(),
+                    plantilla_id=self.plantilla_actual_id  # None si és nova
+                )
+
+                self._actualitzar_llista_plantilles()
+                self.plantilla_actual_id = plantilla_id
+
+                # Seleccionar la plantilla al combobox
+                for text, pid in self._mapa_plantilles.items():
+                    if pid == plantilla_id:
+                        self.plantilla_var.set(text)
+                        break
+
+                accio = "actualitzada" if plantilla_existent else "creada"
+                try:
+                    dialeg.withdraw()
+                    self.after(100, self._restaurar_finestra_principal)
+                    dialeg.after(150, dialeg.destroy)
+                except Exception:
+                    pass
+                self.after(200, lambda: messagebox.showinfo("Èxit", f"Plantilla {accio} correctament!"))
+
+            except Exception as e:
+                self.logger.error(f"Error desant plantilla: {e}")
+                messagebox.showerror("Error", f"Error desant la plantilla: {e}")
+
+        def _tancar():
+            try:
+                dialeg.withdraw()  # Amagar primer
+                self.after(100, self._restaurar_finestra_principal)
+                dialeg.after(150, dialeg.destroy)  # Destruir amb delay
+            except Exception:
+                pass
+
+        ctk.CTkButton(frame_botons, text="Desar", fg_color="#2ecc71", hover_color="#27ae60", command=_desar).pack(side="left", padx=10)
+        ctk.CTkButton(frame_botons, text="Cancel·lar", fg_color="#e74c3c", hover_color="#c0392b", command=_tancar).pack(side="right", padx=10)
+
+        # Gestionar tancament amb la X
+        dialeg.protocol("WM_DELETE_WINDOW", _tancar)
+
+    def _obtenir_model_actual(self, metode):
+        """Retorna el model actual segons el mètode seleccionat."""
+        import os as _os
+        if metode == "openai":
+            return _os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        elif metode == "claude":
+            return _os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        elif metode == "ollama":
+            return _os.getenv("OLLAMA_MODEL", "llama3.2-vision")
+        return "N/A"
+
+    def _veure_document_referencia(self):
+        """Mostra el document de referència de la plantilla actual."""
+        if not self.plantilla_actual_id:
+            return
+
+        ruta = self.gestor_plantilles.obtenir_ruta_document(self.plantilla_actual_id)
+        if ruta and os.path.exists(ruta):
+            self.logger.info(f"Mostrant document de referència: {ruta}")
+            self._mostrar_preview(ruta)
+        else:
+            messagebox.showwarning("Atenció", "No s'ha trobat el document de referència.")
+
+    def _restaurar_finestra_principal(self):
+        """Restaura la finestra principal després de tancar un diàleg."""
+        try:
+            self.attributes('-alpha', 1.0)  # Assegurar opacitat completa
+            self.deiconify()
+            # Restaurar l'estat anterior (maximitzat si ho estava)
+            if hasattr(self, '_estat_finestra_anterior') and self._estat_finestra_anterior == 'zoomed':
+                self.state('zoomed')
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+
+    def _eliminar_plantilla_actual(self):
+        """Elimina la plantilla seleccionada."""
+        if not self.plantilla_actual_id:
+            return
+
+        plantilla = self.gestor_plantilles.obtenir_plantilla(self.plantilla_actual_id)
+        if not plantilla:
+            return
+
+        confirmar = messagebox.askyesno(
+            "Confirmar eliminació",
+            f"Segur que vols eliminar la plantilla '{plantilla['nom']}'?\n\n"
+            "Aquesta acció no es pot desfer."
+        )
+
+        if confirmar:
+            if self.gestor_plantilles.eliminar_plantilla(self.plantilla_actual_id):
+                self.logger.info(f"Plantilla eliminada: {self.plantilla_actual_id}")
+                self.plantilla_actual_id = None
+                self._actualitzar_llista_plantilles()
+                self.plantilla_var.set("Cap (configuració manual)")
+                self.btn_veure_doc_ref.configure(state="disabled")
+                self.btn_eliminar_plantilla.configure(state="disabled")
+                messagebox.showinfo("Èxit", "Plantilla eliminada correctament.")
 
