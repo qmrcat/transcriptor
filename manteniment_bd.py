@@ -382,6 +382,18 @@ class EditorJSON(ctk.CTkToplevel):
 class TaulaTranscripcions(ctk.CTkFrame):
     """Taula de registres amb selecció múltiple i paginació."""
 
+    # Definició de columnes: (nom_capçalera, clau_registre, amplada_pixels)
+    COLUMNES = [
+        ("ID", "id", 50),
+        ("Establiment", "nom", 180),
+        ("NIF", "nif", 120),
+        ("Factura", "factura", 130),
+        ("Total", "total", 80),
+        ("Document", "nomDocument", 170),
+        ("Data", "dataAlta", 140),
+    ]
+    COL_CHECKBOX_AMPLADA = 40
+
     def __init__(self, parent, on_doble_clic=None):
         super().__init__(parent)
         self.on_doble_clic = on_doble_clic
@@ -392,27 +404,37 @@ class TaulaTranscripcions(ctk.CTkFrame):
         self.scroll_frame = ctk.CTkScrollableFrame(self)
         self.scroll_frame.pack(fill="both", expand=True)
 
+    def _configurar_grid_fila(self, frame):
+        """Configura les columnes del grid per a un frame (capçalera o fila de dades)."""
+        frame.grid_columnconfigure(0, minsize=self.COL_CHECKBOX_AMPLADA, weight=0)
+        for i, (_, _, amplada) in enumerate(self.COLUMNES):
+            frame.grid_columnconfigure(i + 1, minsize=amplada, weight=0)
+
+    def _truncar_text(self, text, max_chars):
+        """Trunca el text si supera el nombre màxim de caràcters."""
+        if len(text) > max_chars:
+            return text[:max_chars - 2] + ".."
+        return text
+
     def _crear_capcalera(self):
         """Crea la fila de capçalera amb noms de columna i checkbox 'Tots'."""
         header = ctk.CTkFrame(self, fg_color="#2b2b2b", corner_radius=0)
         header.pack(fill="x")
+        self._configurar_grid_fila(header)
 
         self.var_tots = ctk.BooleanVar(value=False)
         cb_tots = ctk.CTkCheckBox(
-            header, text="", variable=self.var_tots, width=30,
+            header, text="", variable=self.var_tots, width=20,
             command=self._toggle_tots, checkbox_width=18, checkbox_height=18
         )
-        cb_tots.pack(side="left", padx=(10, 5), pady=5)
+        cb_tots.grid(row=0, column=0, padx=(10, 2), pady=5, sticky="w")
 
-        columnes = [
-            ("ID", 50), ("Establiment", 180), ("NIF", 110),
-            ("Factura", 110), ("Total", 80), ("Document", 160), ("Data", 140),
-        ]
-        for text, amplada in columnes:
-            ctk.CTkLabel(
+        for i, (text, _, amplada) in enumerate(self.COLUMNES):
+            lbl = ctk.CTkLabel(
                 header, text=text, font=("Arial", 11, "bold"),
                 width=amplada, anchor="w"
-            ).pack(side="left", padx=3, pady=5)
+            )
+            lbl.grid(row=0, column=i + 1, padx=3, pady=5, sticky="w")
 
     def _toggle_tots(self):
         valor = self.var_tots.get()
@@ -433,19 +455,16 @@ class TaulaTranscripcions(ctk.CTkFrame):
         color_fons = "#333333" if len(self.files_widgets) % 2 == 0 else "#2b2b2b"
         fila = ctk.CTkFrame(self.scroll_frame, fg_color=color_fons, corner_radius=0)
         fila.pack(fill="x", pady=0)
+        self._configurar_grid_fila(fila)
 
         var = ctk.BooleanVar(value=False)
         cb = ctk.CTkCheckBox(
-            fila, text="", variable=var, width=30,
+            fila, text="", variable=var, width=20,
             checkbox_width=18, checkbox_height=18
         )
-        cb.pack(side="left", padx=(10, 5), pady=4)
+        cb.grid(row=0, column=0, padx=(10, 2), pady=4, sticky="w")
 
-        camps = [
-            ("id", 50), ("nom", 180), ("nif", 110),
-            ("factura", 110), ("total", 80), ("nomDocument", 160), ("dataAlta", 140),
-        ]
-        for camp, amplada in camps:
+        for i, (_, camp, amplada) in enumerate(self.COLUMNES):
             valor = registre.get(camp, "")
             if valor is None:
                 valor = ""
@@ -454,21 +473,29 @@ class TaulaTranscripcions(ctk.CTkFrame):
                     valor = f"{float(valor):.2f}"
                 except (ValueError, TypeError):
                     pass
+
+            text = str(valor)
+            # Truncar segons l'amplada (aprox 1 char = 8px amb Consolas 11)
+            max_chars = max(4, amplada // 8)
+            text = self._truncar_text(text, max_chars)
+
             lbl = ctk.CTkLabel(
-                fila, text=str(valor), width=amplada, anchor="w",
+                fila, text=text, width=amplada, anchor="w",
                 font=("Consolas", 11)
             )
-            lbl.pack(side="left", padx=3, pady=4)
+            lbl.grid(row=0, column=i + 1, padx=3, pady=4, sticky="w")
 
-        # Doble clic per veure
-        fila.bind("<Double-Button-1>", lambda e, r=registre: self._on_doble_clic(r))
+        # Cursor mà i clic per editar
+        fila.configure(cursor="hand2")
+        fila.bind("<Button-1>", lambda e, r=registre: self._on_clic_fila(r))
         for widget in fila.winfo_children():
             if isinstance(widget, ctk.CTkLabel):
-                widget.bind("<Double-Button-1>", lambda e, r=registre: self._on_doble_clic(r))
+                widget.configure(cursor="hand2")
+                widget.bind("<Button-1>", lambda e, r=registre: self._on_clic_fila(r))
 
         self.files_widgets.append((fila, var, registre))
 
-    def _on_doble_clic(self, registre):
+    def _on_clic_fila(self, registre):
         if self.on_doble_clic:
             self.on_doble_clic(registre)
 
@@ -728,7 +755,7 @@ class AplicacioManteniment(ctk.CTk):
     # =====================================================================
 
     def _on_doble_clic_taula(self, registre):
-        self._obrir_editor("veure", registre)
+        self._obrir_editor("editar", registre)
 
     def _nou_registre(self):
         self._obrir_editor("crear")

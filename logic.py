@@ -117,6 +117,7 @@ Casos especials:
 La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (Targeta, Efectiu, Bizum, Transferència, etc.).
 """
 
+
     def _codificar_imatge_base64(self, ruta_imatge):
         """Converteix un fitxer d'imatge en una cadena Base64 per a l'API."""
         self.logger.debug(f"Codificant imatge a base64: {ruta_imatge}")
