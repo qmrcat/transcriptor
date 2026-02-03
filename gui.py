@@ -8,15 +8,26 @@ import pandas as pd
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
 import pdf2image
 import time
+import subprocess
+import sys
 import threading  # Perquè la interfície no es bloquegi mentre esperem la IA
 import winsound  # Per a Windows
-from utils import GestorConfiguracio, GestorLogging, GestorPlantilles
+from utils import GestorConfiguracio, GestorLogging, GestorPlantilles, GestorBaseDades
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
 
 
 class InterficieGrafica(TkinterDnD.Tk):
+    # Mètodes requerits per compatibilitat amb CustomTkinter DPI scaling
+    # Necessaris perquè heretem de TkinterDnD.Tk en lloc de CTk
+    _block_update_dimensions_event = False
+
+    def block_update_dimensions_event(self):
+        self._block_update_dimensions_event = True
+
+    def unblock_update_dimensions_event(self):
+        self._block_update_dimensions_event = False
 
     def __init__(self):
         super().__init__()
@@ -36,6 +47,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         # Inicialització lògica
         self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
         self.gestor_plantilles = GestorPlantilles()
+        self.gestor_bd = GestorBaseDades()
         self.plantilla_actual_id = None  # ID de la plantilla seleccionada
         self._estat_finestra_anterior = 'zoomed'  # Estat per defecte
 
@@ -231,6 +243,11 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.subframe_botons.pack(fill="x")
         ctk.CTkButton(self.subframe_botons, text="Copiar", width=90, command=self._copiar_resultats).pack(side="left", padx=5)
         ctk.CTkButton(self.subframe_botons, text="Excel", width=90, fg_color="#2980b9", command=self._exportar_excel).pack(side="left", padx=5)
+        self.btn_editar = ctk.CTkButton(self.subframe_botons, text="Editar", width=90, fg_color="#9b59b6", hover_color="#8e44ad", command=self._obrir_editor_json, state="disabled")
+        self.btn_editar.pack(side="left", padx=5)
+        self.btn_desar_bd = ctk.CTkButton(self.subframe_botons, text="Desar BD", width=90, fg_color="#16a085", hover_color="#1abc9c", command=self._obrir_dialeg_desar_bd, state="disabled")
+        self.btn_desar_bd.pack(side="left", padx=5)
+        ctk.CTkButton(self.subframe_botons, text="Manteniment BD", width=110, fg_color="#f39c12", hover_color="#e67e22", command=self._obrir_manteniment_bd).pack(side="left", padx=5)
         ctk.CTkButton(self.subframe_botons, text="Netejar", width=90, fg_color="#e74c3c", command=self._netejar).pack(side="right", padx=5)
 
 
@@ -596,8 +613,17 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.txt_resultat.delete("1.0", "end")
         if isinstance(resultat, dict):
             self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
+            # Activar botons d'edició i desar BD si el resultat és un dict vàlid i no és un error
+            if "error" not in resultat:
+                self.btn_editar.configure(state="normal")
+                self.btn_desar_bd.configure(state="normal")
+            else:
+                self.btn_editar.configure(state="disabled")
+                self.btn_desar_bd.configure(state="disabled")
         else:
             self.txt_resultat.insert("end", str(resultat))
+            self.btn_editar.configure(state="disabled")
+            self.btn_desar_bd.configure(state="disabled")
 
         self.lbl_cronometre.configure(text=f"Finalitzat en: {temps_final:.2f}s")
 
@@ -671,6 +697,8 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _netejar(self):
         self.txt_resultat.delete("1.0", "end")
+        self.btn_editar.configure(state="disabled")
+        self.btn_desar_bd.configure(state="disabled")
         self.canvas_imatge.delete("all")
         self.txt_ajuda_canvas = self.canvas_imatge.create_text(250, 250, text="Arrossega un document aquí\no prem 'Obrir fitxer...'", fill="#666666", font=("Arial", 12))
         self.ruta_fitxer_actual = None
@@ -785,11 +813,12 @@ class InterficieGrafica(TkinterDnD.Tk):
         # Desar l'estat actual de la finestra principal
         self._estat_finestra_anterior = self.state()
 
-        dialeg = ctk.CTkToplevel(self)
+        dialeg = ctk.CTkToplevel()
         dialeg.title("Desar Plantilla")
         dialeg.geometry("500x450")
         dialeg.resizable(False, False)
-        dialeg.attributes('-topmost', True)  # Mantenir al davant
+        dialeg.transient(self)  # Associar amb la finestra principal
+        dialeg.grab_set()  # Modal: bloquejar interacció amb la finestra principal
 
         # Centrar el diàleg
         self.update_idletasks()
@@ -797,13 +826,8 @@ class InterficieGrafica(TkinterDnD.Tk):
         y = self.winfo_y() + (self.winfo_height() - 450) // 2
         dialeg.geometry(f"500x450+{x}+{y}")
 
-        # Donar focus al diàleg després que estigui visible
-        def _activar_dialeg():
-            dialeg.attributes('-topmost', False)  # Treure topmost després d'activar
-            dialeg.lift()
-            dialeg.focus_force()
-
-        dialeg.after(50, _activar_dialeg)
+        # Donar focus al diàleg
+        dialeg.after(50, lambda: dialeg.focus_force())
 
         # Obtenir dades actuals per pre-omplir
         plantilla_existent = None
@@ -884,25 +908,23 @@ class InterficieGrafica(TkinterDnD.Tk):
                         break
 
                 accio = "actualitzada" if plantilla_existent else "creada"
-                try:
-                    dialeg.withdraw()
-                    self.after(100, self._restaurar_finestra_principal)
-                    dialeg.after(150, dialeg.destroy)
-                except Exception:
-                    pass
-                self.after(200, lambda: messagebox.showinfo("Èxit", f"Plantilla {accio} correctament!"))
+                dialeg.grab_release()
+                dialeg.destroy()
+                # Restaurar estat de la finestra principal
+                if self._estat_finestra_anterior == 'zoomed':
+                    self.after(50, lambda: self.state('zoomed'))
+                messagebox.showinfo("Èxit", f"Plantilla {accio} correctament!")
 
             except Exception as e:
                 self.logger.error(f"Error desant plantilla: {e}")
                 messagebox.showerror("Error", f"Error desant la plantilla: {e}")
 
         def _tancar():
-            try:
-                dialeg.withdraw()  # Amagar primer
-                self.after(100, self._restaurar_finestra_principal)
-                dialeg.after(150, dialeg.destroy)  # Destruir amb delay
-            except Exception:
-                pass
+            dialeg.grab_release()
+            dialeg.destroy()
+            # Restaurar estat de la finestra principal
+            if self._estat_finestra_anterior == 'zoomed':
+                self.after(50, lambda: self.state('zoomed'))
 
         ctk.CTkButton(frame_botons, text="Desar", fg_color="#2ecc71", hover_color="#27ae60", command=_desar).pack(side="left", padx=10)
         ctk.CTkButton(frame_botons, text="Cancel·lar", fg_color="#e74c3c", hover_color="#c0392b", command=_tancar).pack(side="right", padx=10)
@@ -970,4 +992,536 @@ class InterficieGrafica(TkinterDnD.Tk):
                 self.btn_veure_doc_ref.configure(state="disabled")
                 self.btn_eliminar_plantilla.configure(state="disabled")
                 messagebox.showinfo("Èxit", "Plantilla eliminada correctament.")
+
+    # =========================================================================
+    # EDITOR DE JSON TRANSCRIT
+    # =========================================================================
+
+    def _obrir_editor_json(self):
+        """Obre el diàleg d'edició del JSON transcrit."""
+        contingut = self.txt_resultat.get("1.0", "end").strip()
+        try:
+            dades = json.loads(contingut)
+        except json.JSONDecodeError:
+            messagebox.showerror("Error", "El contingut no és JSON vàlid.")
+            return
+
+        # Desar l'estat actual de la finestra principal
+        self._estat_finestra_anterior = self.state()
+
+        # Crear finestra modal
+        self.dialeg_editor = ctk.CTkToplevel()
+        self.dialeg_editor.title("Editar JSON Transcrit")
+        self.dialeg_editor.geometry("950x750")
+        self.dialeg_editor.resizable(True, True)
+        self.dialeg_editor.transient(self)
+        self.dialeg_editor.grab_set()
+
+        # Centrar el diàleg
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 950) // 2
+        y = self.winfo_y() + (self.winfo_height() - 750) // 2
+        self.dialeg_editor.geometry(f"950x750+{x}+{y}")
+
+        # Donar focus al diàleg
+        self.dialeg_editor.after(50, lambda: self.dialeg_editor.focus_force())
+
+        # Estructures per guardar els widgets d'entrada
+        self.editor_entries_capcalera = {}
+        self.editor_files_articles = []
+        self.editor_files_impostos = []
+
+        # Crear les seccions
+        self._crear_seccio_capcalera(self.dialeg_editor, dades)
+        self._crear_seccio_articles(self.dialeg_editor, dades.get("articles", []))
+        self._crear_seccio_impostos(self.dialeg_editor, dades.get("impostos", []))
+        self._crear_botons_accio_editor(self.dialeg_editor)
+
+        # Gestionar tancament amb la X
+        self.dialeg_editor.protocol("WM_DELETE_WINDOW", self._tancar_editor)
+
+    def _crear_seccio_capcalera(self, parent, dades):
+        """Crea la secció de capçalera amb els camps editables."""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", padx=15, pady=(15, 10))
+
+        ctk.CTkLabel(frame, text="Capçalera", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+
+        # Camps de capçalera en dues files
+        camps_fila1 = [
+            ("establiment", "Establiment", 200),
+            ("nifEstabliment", "NIF", 120),
+            ("numeroFacturaRebutTiquet", "Número", 120),
+            ("data", "Data", 100),
+        ]
+        camps_fila2 = [
+            ("hora", "Hora", 80),
+            ("total", "Total", 100),
+            ("forma_pagament", "Forma pagament", 150),
+        ]
+
+        fila1 = ctk.CTkFrame(frame, fg_color="transparent")
+        fila1.pack(fill="x", padx=10, pady=5)
+        for camp, etiqueta, amplada in camps_fila1:
+            subframe = ctk.CTkFrame(fila1, fg_color="transparent")
+            subframe.pack(side="left", padx=5)
+            ctk.CTkLabel(subframe, text=etiqueta, font=("Arial", 10)).pack(anchor="w")
+            entry = ctk.CTkEntry(subframe, width=amplada)
+            entry.pack()
+            valor = dades.get(camp, "")
+            if valor is not None:
+                entry.insert(0, str(valor))
+            self.editor_entries_capcalera[camp] = entry
+
+        fila2 = ctk.CTkFrame(frame, fg_color="transparent")
+        fila2.pack(fill="x", padx=10, pady=5)
+        for camp, etiqueta, amplada in camps_fila2:
+            subframe = ctk.CTkFrame(fila2, fg_color="transparent")
+            subframe.pack(side="left", padx=5)
+            ctk.CTkLabel(subframe, text=etiqueta, font=("Arial", 10)).pack(anchor="w")
+            entry = ctk.CTkEntry(subframe, width=amplada)
+            entry.pack()
+            valor = dades.get(camp, "")
+            if valor is not None:
+                entry.insert(0, str(valor))
+            self.editor_entries_capcalera[camp] = entry
+
+    def _crear_seccio_articles(self, parent, articles):
+        """Crea la secció d'articles amb taula editable i scroll."""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="both", expand=True, padx=15, pady=10)
+
+        # Capçalera de la secció
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(header, text="Articles", font=("Arial", 14, "bold")).pack(side="left")
+        ctk.CTkButton(header, text="+ Afegir article", width=120, command=self._afegir_fila_article).pack(side="right")
+
+        # Capçaleres de columna
+        header_cols = ctk.CTkFrame(frame, fg_color="transparent")
+        header_cols.pack(fill="x", padx=10)
+        columnes = [("Descripció", 180), ("Quantitat", 70), ("Preu", 80), ("Import Base", 80),
+                    ("%IVA", 60), ("Import IVA", 80), ("Import Total", 80), ("", 30)]
+        for text, amplada in columnes:
+            ctk.CTkLabel(header_cols, text=text, font=("Arial", 10, "bold"), width=amplada).pack(side="left", padx=2)
+
+        # Scrollable frame per als articles
+        self.scroll_articles = ctk.CTkScrollableFrame(frame, height=200)
+        self.scroll_articles.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Afegir files existents
+        for article in articles:
+            self._afegir_fila_article(article)
+
+    def _afegir_fila_article(self, dades=None):
+        """Afegeix una fila d'article editable."""
+        if dades is None:
+            dades = {}
+
+        fila = ctk.CTkFrame(self.scroll_articles, fg_color="transparent")
+        fila.pack(fill="x", pady=2)
+
+        camps = [
+            ("descripció", 180), ("quantitat", 70), ("preu", 80), ("importBase", 80),
+            ("percentatgeIVA", 60), ("importIVA", 80), ("importTotal", 80)
+        ]
+
+        entries = {}
+        for camp, amplada in camps:
+            entry = ctk.CTkEntry(fila, width=amplada)
+            entry.pack(side="left", padx=2)
+            valor = dades.get(camp, "")
+            if valor is not None:
+                entry.insert(0, str(valor))
+            entries[camp] = entry
+
+        # Botó eliminar
+        btn_eliminar = ctk.CTkButton(
+            fila, text="X", width=30, fg_color="#e74c3c", hover_color="#c0392b",
+            command=lambda f=fila: self._eliminar_fila_article(f)
+        )
+        btn_eliminar.pack(side="left", padx=2)
+
+        self.editor_files_articles.append((fila, entries))
+
+    def _eliminar_fila_article(self, fila):
+        """Elimina una fila d'article."""
+        for i, (f, entries) in enumerate(self.editor_files_articles):
+            if f == fila:
+                fila.destroy()
+                del self.editor_files_articles[i]
+                break
+
+    def _crear_seccio_impostos(self, parent, impostos):
+        """Crea la secció d'impostos amb taula editable."""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", padx=15, pady=10)
+
+        # Capçalera de la secció
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(header, text="Impostos", font=("Arial", 14, "bold")).pack(side="left")
+        ctk.CTkButton(header, text="+ Afegir impost", width=120, command=self._afegir_fila_impost).pack(side="right")
+
+        # Capçaleres de columna
+        header_cols = ctk.CTkFrame(frame, fg_color="transparent")
+        header_cols.pack(fill="x", padx=10)
+        columnes = [("% IVA", 100), ("Import Base IVA", 150), ("Quota IVA", 150), ("", 30)]
+        for text, amplada in columnes:
+            ctk.CTkLabel(header_cols, text=text, font=("Arial", 10, "bold"), width=amplada).pack(side="left", padx=5)
+
+        # Frame per als impostos
+        self.frame_impostos = ctk.CTkFrame(frame, fg_color="transparent")
+        self.frame_impostos.pack(fill="x", padx=10, pady=5)
+
+        # Afegir files existents
+        for impost in impostos:
+            self._afegir_fila_impost(impost)
+
+    def _afegir_fila_impost(self, dades=None):
+        """Afegeix una fila d'impost editable."""
+        if dades is None:
+            dades = {}
+
+        fila = ctk.CTkFrame(self.frame_impostos, fg_color="transparent")
+        fila.pack(fill="x", pady=2)
+
+        camps = [("percentatgeIVA", 100), ("importBaseIVA", 150), ("quotaIVA", 150)]
+
+        entries = {}
+        for camp, amplada in camps:
+            entry = ctk.CTkEntry(fila, width=amplada)
+            entry.pack(side="left", padx=5)
+            valor = dades.get(camp, "")
+            if valor is not None:
+                entry.insert(0, str(valor))
+            entries[camp] = entry
+
+        # Botó eliminar
+        btn_eliminar = ctk.CTkButton(
+            fila, text="X", width=30, fg_color="#e74c3c", hover_color="#c0392b",
+            command=lambda f=fila: self._eliminar_fila_impost(f)
+        )
+        btn_eliminar.pack(side="left", padx=5)
+
+        self.editor_files_impostos.append((fila, entries))
+
+    def _eliminar_fila_impost(self, fila):
+        """Elimina una fila d'impost."""
+        for i, (f, entries) in enumerate(self.editor_files_impostos):
+            if f == fila:
+                fila.destroy()
+                del self.editor_files_impostos[i]
+                break
+
+    def _crear_botons_accio_editor(self, parent):
+        """Crea els botons d'acció (Desar/Cancel·lar) de l'editor."""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", padx=15, pady=15)
+
+        ctk.CTkButton(
+            frame, text="Desar", width=120, fg_color="#2ecc71", hover_color="#27ae60",
+            command=self._desar_edicio
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            frame, text="Cancel·lar", width=120, fg_color="#e74c3c", hover_color="#c0392b",
+            command=self._tancar_editor
+        ).pack(side="right", padx=10)
+
+    def _construir_json_des_de_formulari(self):
+        """Recull tots els valors dels widgets i genera el diccionari."""
+        resultat = {}
+
+        # Capçalera
+        for camp, entry in self.editor_entries_capcalera.items():
+            valor = entry.get().strip()
+            # Convertir a número si és el camp total
+            if camp == "total" and valor:
+                try:
+                    # Acceptar comes i punts com a separador decimal
+                    valor = float(valor.replace(",", "."))
+                except ValueError:
+                    pass
+            resultat[camp] = valor if valor else None
+
+        # Articles
+        articles = []
+        for fila, entries in self.editor_files_articles:
+            article = {}
+            for camp, entry in entries.items():
+                valor = entry.get().strip()
+                # Convertir camps numèrics
+                if camp in ("quantitat", "preu", "importBase", "percentatgeIVA", "importIVA", "importTotal") and valor:
+                    try:
+                        valor = float(valor.replace(",", "."))
+                    except ValueError:
+                        pass
+                article[camp] = valor if valor else None
+            articles.append(article)
+        resultat["articles"] = articles
+
+        # Impostos
+        impostos = []
+        for fila, entries in self.editor_files_impostos:
+            impost = {}
+            for camp, entry in entries.items():
+                valor = entry.get().strip()
+                # Convertir camps numèrics
+                if valor:
+                    try:
+                        valor = float(valor.replace(",", "."))
+                    except ValueError:
+                        pass
+                impost[camp] = valor if valor else None
+            impostos.append(impost)
+        resultat["impostos"] = impostos
+
+        return resultat
+
+    def _desar_edicio(self):
+        """Desa l'edició i actualitza l'àrea de resultats."""
+        try:
+            dades = self._construir_json_des_de_formulari()
+            json_formatat = json.dumps(dades, indent=4, ensure_ascii=False)
+
+            # Actualitzar l'àrea de resultats
+            self.txt_resultat.delete("1.0", "end")
+            self.txt_resultat.insert("end", json_formatat)
+
+            self.logger.info("JSON editat i desat correctament")
+            self._tancar_editor()
+
+        except Exception as e:
+            self.logger.error(f"Error desant l'edició: {e}")
+            messagebox.showerror("Error", f"Error desant l'edició: {e}")
+
+    def _tancar_editor(self):
+        """Tanca el diàleg d'edició."""
+        if hasattr(self, 'dialeg_editor') and self.dialeg_editor:
+            self.dialeg_editor.grab_release()
+            self.dialeg_editor.destroy()
+            self.dialeg_editor = None
+        # Restaurar estat de la finestra principal
+        if self._estat_finestra_anterior == 'zoomed':
+            self.after(50, lambda: self.state('zoomed'))
+
+    # =========================================================================
+    # DESAR A BASE DE DADES
+    # =========================================================================
+
+    def _obrir_manteniment_bd(self):
+        """Obre l'aplicació de manteniment de la base de dades en un procés separat."""
+        try:
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "manteniment_bd.py")
+            subprocess.Popen([sys.executable, script])
+            self.logger.info("Aplicació de manteniment BD oberta")
+        except Exception as e:
+            self.logger.error(f"Error obrint manteniment BD: {e}")
+            messagebox.showerror("Error", f"No s'ha pogut obrir l'aplicació de manteniment:\n{e}")
+
+    def _obrir_dialeg_desar_bd(self):
+        """Obre el diàleg per validar i desar la transcripció a la base de dades."""
+        contingut = self.txt_resultat.get("1.0", "end").strip()
+        try:
+            dades = json.loads(contingut)
+        except json.JSONDecodeError:
+            messagebox.showerror("Error", "El contingut no és JSON vàlid.")
+            return
+
+        # Desar l'estat actual de la finestra principal
+        self._estat_finestra_anterior = self.state()
+
+        # Crear finestra modal
+        self.dialeg_desar_bd = ctk.CTkToplevel()
+        self.dialeg_desar_bd.title("Desar a Base de Dades")
+        self.dialeg_desar_bd.geometry("550x400")
+        self.dialeg_desar_bd.resizable(False, False)
+        self.dialeg_desar_bd.transient(self)
+        self.dialeg_desar_bd.grab_set()
+
+        # Centrar el diàleg
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 550) // 2
+        y = self.winfo_y() + (self.winfo_height() - 400) // 2
+        self.dialeg_desar_bd.geometry(f"550x400+{x}+{y}")
+
+        # Donar focus al diàleg
+        self.dialeg_desar_bd.after(50, lambda: self.dialeg_desar_bd.focus_force())
+
+        # Extreure dades del JSON
+        nom = dades.get("establiment", "") or ""
+        nif = dades.get("nifEstabliment", "") or ""
+        factura = dades.get("numeroFacturaRebutTiquet", "") or ""
+        total = dades.get("total", "")
+        if total is not None:
+            total = str(total)
+        else:
+            total = ""
+
+        # Nom del document
+        nom_document = ""
+        if self.ruta_fitxer_actual:
+            nom_document = os.path.basename(self.ruta_fitxer_actual)
+
+        # Frame principal
+        frame = ctk.CTkFrame(self.dialeg_desar_bd)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ctk.CTkLabel(frame, text="Validar dades abans de desar", font=("Arial", 16, "bold")).pack(pady=(0, 15))
+
+        # Guardar les entrades per poder-les llegir després
+        self.entries_desar_bd = {}
+
+        # Camps editables
+        camps = [
+            ("nom", "Establiment:", nom),
+            ("nif", "NIF:", nif),
+            ("factura", "Núm. Factura/Tiquet:", factura),
+            ("total", "Total:", total),
+            ("nomDocument", "Nom Document:", nom_document),
+        ]
+
+        for camp_id, etiqueta, valor in camps:
+            subframe = ctk.CTkFrame(frame, fg_color="transparent")
+            subframe.pack(fill="x", pady=5)
+
+            lbl = ctk.CTkLabel(subframe, text=etiqueta, width=150, anchor="w")
+            lbl.pack(side="left", padx=5)
+
+            entry = ctk.CTkEntry(subframe, width=350)
+            entry.pack(side="left", padx=5)
+            entry.insert(0, valor)
+
+            # Marcar camps obligatoris buits
+            if not valor and camp_id in ("nom", "factura"):
+                entry.configure(border_color="#e74c3c")
+
+            self.entries_desar_bd[camp_id] = entry
+
+        # Advertència per a camps obligatoris
+        self.lbl_advertencia_bd = ctk.CTkLabel(
+            frame,
+            text="",
+            text_color="#e74c3c",
+            font=("Arial", 11)
+        )
+        self.lbl_advertencia_bd.pack(pady=10)
+
+        # Comprovar si la factura ja existeix
+        if nif and factura:
+            if self.gestor_bd.existeix_factura(nif, factura):
+                self.lbl_advertencia_bd.configure(
+                    text="⚠ Ja existeix una factura amb aquest NIF i número!"
+                )
+
+        # Guardar el JSON complet per inserir-lo
+        self._json_a_desar = contingut
+
+        # Botons
+        frame_botons = ctk.CTkFrame(frame, fg_color="transparent")
+        frame_botons.pack(fill="x", pady=(20, 0))
+
+        ctk.CTkButton(
+            frame_botons, text="Editar JSON", width=100,
+            fg_color="#9b59b6", hover_color="#8e44ad",
+            command=self._editar_abans_de_desar
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            frame_botons, text="Desar", width=100,
+            fg_color="#2ecc71", hover_color="#27ae60",
+            command=self._desar_a_bd
+        ).pack(side="right", padx=5)
+
+        ctk.CTkButton(
+            frame_botons, text="Cancel·lar", width=100,
+            fg_color="#e74c3c", hover_color="#c0392b",
+            command=self._tancar_dialeg_desar_bd
+        ).pack(side="right", padx=5)
+
+        # Gestionar tancament amb la X
+        self.dialeg_desar_bd.protocol("WM_DELETE_WINDOW", self._tancar_dialeg_desar_bd)
+
+    def _editar_abans_de_desar(self):
+        """Tanca el diàleg de desar i obre l'editor JSON."""
+        self._tancar_dialeg_desar_bd()
+        self._obrir_editor_json()
+
+    def _desar_a_bd(self):
+        """Valida les dades i les desa a la base de dades."""
+        # Recollir dades dels camps
+        nom = self.entries_desar_bd["nom"].get().strip()
+        nif = self.entries_desar_bd["nif"].get().strip()
+        factura = self.entries_desar_bd["factura"].get().strip()
+        total_str = self.entries_desar_bd["total"].get().strip()
+        nom_document = self.entries_desar_bd["nomDocument"].get().strip()
+
+        # Validar camps obligatoris
+        camps_buits = []
+        if not nom:
+            camps_buits.append("Establiment")
+            self.entries_desar_bd["nom"].configure(border_color="#e74c3c")
+        else:
+            self.entries_desar_bd["nom"].configure(border_color=["#979DA2", "#565B5E"])
+
+        if not factura:
+            camps_buits.append("Núm. Factura/Tiquet")
+            self.entries_desar_bd["factura"].configure(border_color="#e74c3c")
+        else:
+            self.entries_desar_bd["factura"].configure(border_color=["#979DA2", "#565B5E"])
+
+        if camps_buits:
+            self.lbl_advertencia_bd.configure(
+                text=f"⚠ Camps obligatoris buits: {', '.join(camps_buits)}"
+            )
+            return
+
+        # Convertir total a número
+        total = None
+        if total_str:
+            try:
+                total = float(total_str.replace(",", "."))
+            except ValueError:
+                self.lbl_advertencia_bd.configure(text="⚠ El total ha de ser un número vàlid")
+                return
+
+        # Comprovar si ja existeix
+        if nif and factura and self.gestor_bd.existeix_factura(nif, factura):
+            confirmar = messagebox.askyesno(
+                "Duplicat detectat",
+                f"Ja existeix una factura amb NIF '{nif}' i número '{factura}'.\n\n"
+                "Vols desar-la igualment?"
+            )
+            if not confirmar:
+                return
+
+        try:
+            # Inserir a la base de dades
+            registre_id = self.gestor_bd.inserir_transcripcio(
+                nom=nom,
+                nif=nif,
+                factura=factura,
+                total=total,
+                contingut_json=self._json_a_desar,
+                nom_document=nom_document
+            )
+
+            self.logger.info(f"Transcripció desada a BD: ID={registre_id}")
+            self._tancar_dialeg_desar_bd()
+            messagebox.showinfo("Èxit", f"Transcripció desada correctament!\nID: {registre_id}")
+
+        except Exception as e:
+            self.logger.error(f"Error desant a BD: {e}")
+            messagebox.showerror("Error", f"Error desant a la base de dades:\n{e}")
+
+    def _tancar_dialeg_desar_bd(self):
+        """Tanca el diàleg de desar a BD."""
+        if hasattr(self, 'dialeg_desar_bd') and self.dialeg_desar_bd:
+            self.dialeg_desar_bd.grab_release()
+            self.dialeg_desar_bd.destroy()
+            self.dialeg_desar_bd = None
+        # Restaurar estat de la finestra principal
+        if self._estat_finestra_anterior == 'zoomed':
+            self.after(50, lambda: self.state('zoomed'))
 

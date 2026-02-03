@@ -1,97 +1,162 @@
-Aquí tens un fitxer `README.md` professional i complet, que recull totes les potents funcionalitats que hem anat construint pas a pas. Està dissenyat perquè qualsevol persona que vegi el teu projecte entengui immediatament el seu valor.
+# Transcriptor de Tiquets Pro
 
----
+Eina de digitalització de tiquets, factures i albarans que extreu dades estructurades mitjançant **IA (OpenAI Vision, Claude/Anthropic, Ollama)** i **OCR local (Tesseract)**. Inclou interfície gràfica amb CustomTkinter, editor visual de JSON, persistència en SQLite i una aplicació de manteniment de base de dades.
 
-### `README.md`
+## Característiques
 
-# 🧾 Transcriptor de Tiquets Pro (IA + OCR)
+### Interficie grafica (gui.py)
 
-Una eina avançada de digitalització per a la gestió de despeses que utilitza **Intel·ligència Artificial (OpenAI Vision)** i **OCR local (Tesseract)** per extreure dades estructurades de tiquets i factures amb precisió professional.
+- **Multi-format**: imatges (JPG, PNG, WebP) i PDF multi-pagina.
+- **Drag & Drop**: arrossega fitxers al canvas o carrega manualment.
+- **Previsualitzacio interactiva**: zoom fins al 500%, scroll amb roda del ratoli, `Ctrl+Roda` per zoom, navegacio de pagines PDF amb lazy loading i cache.
+- **4 metodes d'extraccio**: OCR local (Tesseract), OpenAI Vision, Claude/Anthropic, Ollama (LLM local).
+- **Instruccions addicionals**: camp de text per personalitzar el prompt enviat a la IA.
+- **Editor visual de JSON**: edicio de capcalera, articles i impostos amb formulari grafic.
+- **Exportacio**: copiar al porta-retalls, exportar a Excel (.xlsx).
+- **Desar a BD**: validacio de camps i deteccio de duplicats abans d'inserir a SQLite.
+- **Gestio de plantilles**: desar/carregar/eliminar configuracions de metode, model i instruccions.
+- **Boto Manteniment BD**: obre l'aplicacio de manteniment de base de dades directament des de la GUI principal.
+- **Notificacio sonora**: so al finalitzar el processament (configurable).
 
-## ✨ Característiques Principals
+### Manteniment de base de dades (manteniment_bd.py)
 
-### 🖥️ Interfície d'Usuari Avançada
+Aplicacio autonoma per gestionar els registres de transcripcions desats a SQLite.
 
-* **Suport Multi-format**: Processa imatges (`JPG`, `PNG`, `WebP`) i fitxers `PDF`.
-* **Drag & Drop**: Arrossega fitxers directament a l'aplicació o fes servir el botó de càrrega manual.
-* **Previsualització Interactiva**:
-* **Zoom dinàmic**: Fins al 500% per llegir la lletra més petita.
-* **Navegació de PDF**: Botons per passar pàgines en documents multi-pàgina.
-* **Scroll amb ratolí**: Navegació fluida amb la roda del ratolí i suport per a `Ctrl + Roda` per fer zoom.
+- **Taula de registres**: visualitzacio amb seleccio multiple (checkboxes), files alternades, doble clic per veure detalls.
+- **CRUD complet**: crear, veure, editar i eliminar registres.
+- **Editor JSON integrat**: formulari visual amb modes crear/editar/veure (nomes lectura).
+- **Cerca**: per text lliure o filtrat per columna especifica (Establiment, NIF, Factura, Document).
+- **Paginacio**: 25, 50 o 100 registres per pagina amb navegacio.
+- **Exportacio JSON**: registres seleccionats amb `contingutJSON` parsejat com a objecte.
+- **Exportacio CSV**: camps de BD + camps extrets del JSON (forma_pagament, data_document, num_articles), delimitador `;`, codificacio UTF-8 amb BOM.
+- **Barra d'estat**: total de registres, seleccionats, fitxer de BD actiu.
 
+### Logica de processament (logic.py)
 
+- `TranscriptorTiquets`: classe base amb `processar_imatge_ocr()`, `processar_amb_openai()`, `processar_amb_claude()`, `processar_amb_ollama()`.
+- `TranscriptorAmbCostos`: hereda de la base i afegeix seguiment de costos per transaccio.
+- Prompt estructurat que retorna JSON amb: establiment, NIF, numero de factura, data, hora, total, forma de pagament, articles (descripcio, quantitat, preu, imports, IVA) i impostos.
 
-### 🧠 Intel·ligència d'Extracció
+### Utilitats (utils.py)
 
-* **Mode IA (OpenAI Vision)**: Extreu automàticament l'establiment, NIF, data, impostos detallats i desglossament d'articles en format JSON.
-* **Mode OCR Local**: Processament ràpid i gratuït mitjançant Tesseract OCR per a extraccions de text simple.
-* **Exportació a Excel**: Converteix el JSON analitzat en un full de càlcul `.xlsx` amb un sol clic.
+- `GestorLogging`: logging centralitzat amb rotacio, compressio gzip, format JSON opcional, metriques i decorador `@mesurar_temps`.
+- `GestorConfiguracio`: carrega/desa configuracio des de `config.json` i `.env`.
+- `GestorPlantilles`: gestio de plantilles de documents a `plantilles.json`.
+- `CalculadoraCostos`: registre d'historial de costos API a `historial_costos.json`.
+- `GestorBaseDades`: persistencia SQLite amb CRUD complet, cerca amb filtre per columna, paginacio i deteccio de duplicats.
 
-### 💰 Gestió i Control
+## Estructura del projecte
 
-* **Monitor de Costos**: Script dedicat per controlar la despesa real de l'API d'OpenAI i fer estimacions de pressupost.
-* **Seguretat**: Gestió de claus API mitjançant variables d'entorn (`.env`).
+| Fitxer | Descripcio |
+|--------|------------|
+| `main.py` | Punt d'entrada: parseja arguments CLI, obre la GUI si no n'hi ha |
+| `gui.py` | Interficie grafica amb drag-drop, zoom, editor JSON, desar a BD |
+| `logic.py` | Processament OCR, OpenAI, Claude i Ollama |
+| `utils.py` | Configuracio, logging, plantilles, costos, base de dades |
+| `manteniment_bd.py` | App autonoma de manteniment CRUD de la BD de transcripcions |
+| `consultar_costos_openai.py` | Eina CLI d'auditoria de costos d'API |
+| `exemple_us.py` | Script d'exemple per processament per lots |
 
----
+## Installacio
 
-## 🚀 Instal·lació
+### Requisits del sistema
 
-### 1. Requisits del sistema
+- **Python 3.10+**
+- **Tesseract OCR**: [descarregar](https://github.com/UB-Mannheim/tesseract/wiki)
+- **Poppler** (per a PDFs): [descarregar binaris](https://github.com/oschwartz10612/poppler-windows/releases) i afegir `bin` al PATH
+- **Ollama** (opcional): per a processament amb LLM local
 
-* **Python 3.10+**
-* **Tesseract OCR**: [Descarregar aquí](https://www.google.com/search?q=https://github.com/UB-Mannheim/tesseract/wiki).
-* **Poppler** (per a PDFs): [Descarregar binaris](https://github.com/oschwartz10612/poppler-windows/releases) i afegir la carpeta `bin` al PATH.
-
-### 2. Clonar i instal·lar dependències
+### Installacio de dependencies
 
 ```bash
-git clone https://github.com/el-teu-usuari/transcriptor-tiquets.git
-cd transcriptor-tiquets
 pip install -r requirements.txt
-
 ```
 
-### 3. Configuració
+### Configuracio
 
 Crea un fitxer `.env` a l'arrel del projecte:
 
 ```env
-OPENAI_API_KEY=la_teva_clau_aquí
+# API Keys
+OPENAI_API_KEY=la_teva_clau
+OPENAI_MODEL=gpt-4o-mini
+ANTHROPIC_API_KEY=la_teva_clau
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
 
+# OCR
+TESSERACT_PATH=C:/Program Files/Tesseract-OCR/tesseract.exe
+DEFAULT_LANGUAGE=cat+spa
+
+# Ollama (opcional)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2-vision
+
+# Altres
+ENABLE_SOUND=TRUE
 ```
 
----
+## Us
 
-## 🛠️ Estructura del Projecte
+### GUI principal
 
-| Fitxer | Descripció |
-| --- | --- |
-| `main.py` | Punt d'entrada de l'aplicació. |
-| `gui.py` | Tota la lògica de la interfície gràfica (Tkinter/CustomTkinter). |
-| `logic.py` | Integració amb OpenAI Vision i Tesseract OCR. |
-| `utils.py` | Gestor de configuració i registre d'historial de costos. |
-| `consultar_costos_openai.py` | Eina d'auditoria de despeses. |
-| `exemple_us.py` | Script per al processament automatitzat per lots. |
+```bash
+python main.py
+```
 
----
+1. Arrossega un tiquet o factura al panell esquerre (o prem "Obrir fitxer...").
+2. Selecciona el metode d'extraccio (OCR, OpenAI, Claude, Ollama).
+3. Opcionalment, escriu instruccions addicionals o selecciona una plantilla.
+4. Prem **Analitzar Document**.
+5. Revisa el JSON al panell dret; edita'l amb el boto **Editar** si cal.
+6. Exporta a Excel, copia al porta-retalls o desa a la base de dades amb **Desar BD**.
+7. Obre **Manteniment BD** per gestionar els registres desats.
 
-## 📖 Com s'utilitza
+### Manteniment de base de dades
 
-1. **Execució**: Llença l'aplicació amb `python main.py`.
-2. **Càrrega**: Arrossega un tiquet al panell esquerre.
-3. **Ajust**: Fes zoom o navega per les pàgines si és un PDF.
-4. **Processament**: Tria el mètode (IA o OCR) i prem **Analitzar**.
-5. **Validació**: Revisa el JSON generat al panell dret (pots editar-lo manualment).
-6. **Exportació**: Prem el botó **Excel** per desar la informació estructurada.
+```bash
+python manteniment_bd.py
+```
 
----
+O des de la GUI principal amb el boto **Manteniment BD**.
 
-## 🔒 Privacitat i Costos
+### CLI
 
-Aquesta eina permet l'ús de models locals (via `BASE_URL` a l'API) per a màxima privacitat. Per defecte, el mètode OpenAI utilitza el model `gpt-4o-mini`, optimitzat per a una alta precisió amb el cost més baix possible.
+```bash
+# OCR
+python main.py imatge.jpg --metode ocr --idioma cat+spa
 
----
+# OpenAI Vision
+python main.py factura.pdf --metode openai --api-key CLAU --sortida resultat.json
 
----
+# Processament per lots
+python exemple_us.py
+```
 
-### Vols que t'ajudi a pujar-ho a un repositori de GitHub o necessites alguna secció més per a la documentació?
+### Auditoria de costos
+
+```bash
+python consultar_costos_openai.py
+```
+
+## Persistencia de dades
+
+| Fitxer/BD | Contingut |
+|-----------|-----------|
+| `transcripcions.db` | Base de dades SQLite amb transcripcions |
+| `config.json` | Configuracio de l'aplicacio |
+| `plantilles/plantilles.json` | Plantilles de documents |
+| `historial_costos.json` | Historial de costos d'API |
+| `logs/` | Fitxers de log amb rotacio |
+
+## Dependencies
+
+- `customtkinter` - GUI moderna
+- `Pillow` - Manipulacio d'imatges
+- `pytesseract` - OCR local
+- `pdf2image` - Conversio PDF a imatge
+- `openai` - API OpenAI Vision
+- `anthropic` - API Claude/Anthropic
+- `python-dotenv` - Variables d'entorn
+- `tkinterdnd2-universal` - Drag & Drop
+- `pandas` - Exportacio Excel
+- `pygame` - Notificacions sonores

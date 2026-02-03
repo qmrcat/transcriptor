@@ -7,6 +7,7 @@ import logging
 import functools
 import time
 import threading
+import sqlite3
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from contextlib import contextmanager
@@ -702,3 +703,249 @@ class CalculadoraCostos:
         except Exception as e:
             self.logger.error(f"Error llegint historial de costos: {e}")
         return []
+
+
+# =============================================================================
+# GESTIÓ DE BASE DE DADES - TRANSCRIPCIONS
+# =============================================================================
+
+class GestorBaseDades:
+    """Gestiona la persistència de transcripcions en una base de dades SQLite."""
+
+    FITXER_BD = "transcripcions.db"
+
+    def __init__(self, fitxer_bd=None):
+        self.fitxer_bd = fitxer_bd or self.FITXER_BD
+        self.logger = GestorLogging.obtenir_logger("utils.GestorBaseDades")
+        self._inicialitzar_bd()
+        self.logger.debug(f"GestorBaseDades inicialitzat: {self.fitxer_bd}")
+
+    def _inicialitzar_bd(self):
+        """Crea la taula de transcripcions si no existeix."""
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS transcripcions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nom TEXT,
+                        nif TEXT,
+                        factura TEXT,
+                        total REAL,
+                        contingutJSON TEXT NOT NULL,
+                        nomDocument TEXT,
+                        dataAlta TEXT NOT NULL
+                    )
+                """)
+                conn.commit()
+                self.logger.info("Taula de transcripcions verificada/creada")
+        except sqlite3.Error as e:
+            self.logger.error(f"Error inicialitzant base de dades: {e}")
+            raise
+
+    def inserir_transcripcio(self, nom, nif, factura, total, contingut_json, nom_document):
+        """
+        Insereix una nova transcripció a la base de dades.
+
+        Args:
+            nom: Nom de l'establiment
+            nif: NIF de l'establiment
+            factura: Número de factura/tiquet/rebut
+            total: Total del document
+            contingut_json: JSON complet de la transcripció (com a string)
+            nom_document: Nom del fitxer original escanejat
+
+        Returns:
+            ID del registre inserit
+        """
+        data_alta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO transcripcions (nom, nif, factura, total, contingutJSON, nomDocument, dataAlta)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (nom, nif, factura, total, contingut_json, nom_document, data_alta))
+                conn.commit()
+                registre_id = cursor.lastrowid
+                self.logger.info(f"Transcripció inserida: ID={registre_id}, establiment={nom}")
+                return registre_id
+        except sqlite3.Error as e:
+            self.logger.error(f"Error inserint transcripció: {e}")
+            raise
+
+    def obtenir_transcripcio(self, registre_id):
+        """Obté una transcripció pel seu ID."""
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM transcripcions WHERE id = ?", (registre_id,))
+                fila = cursor.fetchone()
+                if fila:
+                    return dict(fila)
+                return None
+        except sqlite3.Error as e:
+            self.logger.error(f"Error obtenint transcripció {registre_id}: {e}")
+            raise
+
+    def llistar_transcripcions(self, limit=100, offset=0):
+        """
+        Llista les transcripcions amb paginació.
+
+        Args:
+            limit: Nombre màxim de registres a retornar
+            offset: Nombre de registres a saltar
+
+        Returns:
+            Llista de diccionaris amb les transcripcions
+        """
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, nom, nif, factura, total, nomDocument, dataAlta
+                    FROM transcripcions
+                    ORDER BY dataAlta DESC
+                    LIMIT ? OFFSET ?
+                """, (limit, offset))
+                files = cursor.fetchall()
+                return [dict(fila) for fila in files]
+        except sqlite3.Error as e:
+            self.logger.error(f"Error llistant transcripcions: {e}")
+            raise
+
+    def cercar_transcripcions(self, terme, columna=None, limit=None, offset=0):
+        """
+        Cerca transcripcions per nom d'establiment, NIF o número de factura.
+
+        Args:
+            terme: Text a cercar
+            columna: Columna específica per filtrar (nom, nif, factura, nomDocument).
+                     Si és None, cerca a nom, nif i factura.
+            limit: Nombre màxim de registres a retornar (None = sense límit)
+            offset: Nombre de registres a saltar
+
+        Returns:
+            Llista de transcripcions coincidents
+        """
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cerca = f"%{terme}%"
+
+                columnes_valides = {"nom", "nif", "factura", "nomDocument", "total"}
+                if columna and columna in columnes_valides:
+                    query = f"""
+                        SELECT id, nom, nif, factura, total, nomDocument, dataAlta
+                        FROM transcripcions
+                        WHERE {columna} LIKE ?
+                        ORDER BY dataAlta DESC
+                    """
+                    params = [cerca]
+                else:
+                    query = """
+                        SELECT id, nom, nif, factura, total, nomDocument, dataAlta
+                        FROM transcripcions
+                        WHERE nom LIKE ? OR nif LIKE ? OR factura LIKE ?
+                        ORDER BY dataAlta DESC
+                    """
+                    params = [cerca, cerca, cerca]
+
+                if limit is not None:
+                    query += " LIMIT ? OFFSET ?"
+                    params.extend([limit, offset])
+
+                cursor.execute(query, params)
+                files = cursor.fetchall()
+                return [dict(fila) for fila in files]
+        except sqlite3.Error as e:
+            self.logger.error(f"Error cercant transcripcions: {e}")
+            raise
+
+    def actualitzar_transcripcio(self, registre_id, nom, nif, factura, total, contingut_json, nom_document):
+        """
+        Actualitza una transcripció existent a la base de dades.
+
+        Args:
+            registre_id: ID del registre a actualitzar
+            nom: Nom de l'establiment
+            nif: NIF de l'establiment
+            factura: Número de factura/tiquet/rebut
+            total: Total del document
+            contingut_json: JSON complet de la transcripció (com a string)
+            nom_document: Nom del fitxer original escanejat
+
+        Returns:
+            True si s'ha actualitzat correctament
+        """
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE transcripcions
+                    SET nom = ?, nif = ?, factura = ?, total = ?, contingutJSON = ?, nomDocument = ?
+                    WHERE id = ?
+                """, (nom, nif, factura, total, contingut_json, nom_document, registre_id))
+                conn.commit()
+                actualitzats = cursor.rowcount
+                if actualitzats > 0:
+                    self.logger.info(f"Transcripció actualitzada: ID={registre_id}, establiment={nom}")
+                return actualitzats > 0
+        except sqlite3.Error as e:
+            self.logger.error(f"Error actualitzant transcripció {registre_id}: {e}")
+            raise
+
+    def eliminar_transcripcio(self, registre_id):
+        """Elimina una transcripció pel seu ID."""
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM transcripcions WHERE id = ?", (registre_id,))
+                conn.commit()
+                eliminats = cursor.rowcount
+                if eliminats > 0:
+                    self.logger.info(f"Transcripció eliminada: ID={registre_id}")
+                return eliminats > 0
+        except sqlite3.Error as e:
+            self.logger.error(f"Error eliminant transcripció {registre_id}: {e}")
+            raise
+
+    def comptar_transcripcions(self):
+        """Retorna el nombre total de transcripcions."""
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM transcripcions")
+                return cursor.fetchone()[0]
+        except sqlite3.Error as e:
+            self.logger.error(f"Error comptant transcripcions: {e}")
+            raise
+
+    def existeix_factura(self, nif, factura):
+        """
+        Comprova si ja existeix una factura amb el mateix NIF i número.
+
+        Args:
+            nif: NIF de l'establiment
+            factura: Número de factura
+
+        Returns:
+            True si existeix, False si no
+        """
+        if not nif or not factura:
+            return False
+        try:
+            with sqlite3.connect(self.fitxer_bd) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) FROM transcripcions
+                    WHERE nif = ? AND factura = ?
+                """, (nif, factura))
+                return cursor.fetchone()[0] > 0
+        except sqlite3.Error as e:
+            self.logger.error(f"Error comprovant existència de factura: {e}")
+            return False

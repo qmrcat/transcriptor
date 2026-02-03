@@ -62,6 +62,7 @@ El JSON ha de tenir exactament aquest format:
   "data": "DD/MM/YYYY",
   "hora": "HH:MM",
   "total": "0,00",
+  "forma_pagament": "Targeta/Efectiu/...",
   "impostos": [
     {
     "percentatgeIVA": "21%",
@@ -79,8 +80,7 @@ El JSON ha de tenir exactament aquest format:
     "importIVA": "0,00",
     "importTotal": "0,00"
     }
-  ],
-  "forma_pagament": "Targeta/Efectiu"
+  ]
 }
 
 Regles generals:
@@ -112,7 +112,7 @@ Casos especials:
 - Algunes línies poden ser textos explicatius (ofertes, promocions, descomptes, aclariments). Ignora-les.
 - La quantitat i el preu poden aparèixer junts (ex: "2 x 3,50"). Separa correctament quantitat i preu.
 - Si el preu inclou IVA, només calcula import base i quota d'IVA si el percentatge apareix explícitament.
-- La separació decimal pot ser amb coma o punt segons l'idioma del tiquet, però retorna sempre els imports amb coma.
+- Important! La separació decimal pot ser amb coma o punt segons l'idioma del tiquet, però retorna sempre els imports amb coma.
 
 La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (Targeta, Efectiu, Bizum, Transferència, etc.).
 """
