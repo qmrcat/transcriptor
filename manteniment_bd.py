@@ -398,6 +398,10 @@ class TaulaTranscripcions(ctk.CTkFrame):
         super().__init__(parent)
         self.on_doble_clic = on_doble_clic
         self.files_widgets = []  # [(frame, checkbox_var, registre_dict), ...]
+        self.registres_actuals = []
+        self.columna_ordenacio = None  # clau de la columna ordenada
+        self.ordre_ascendent = True
+        self.labels_capcalera = {}  # clau -> CTkLabel
 
         self._crear_capcalera()
 
@@ -429,27 +433,82 @@ class TaulaTranscripcions(ctk.CTkFrame):
         )
         cb_tots.grid(row=0, column=0, padx=(10, 2), pady=5, sticky="w")
 
-        for i, (text, _, amplada) in enumerate(self.COLUMNES):
+        for i, (text, clau, amplada) in enumerate(self.COLUMNES):
             lbl = ctk.CTkLabel(
                 header, text=text, font=("Arial", 11, "bold"),
-                width=amplada, anchor="w"
+                width=amplada, anchor="w", cursor="hand2"
             )
             lbl.grid(row=0, column=i + 1, padx=3, pady=5, sticky="w")
+            lbl.bind("<Button-1>", lambda e, c=clau: self._ordenar_per_columna(c))
+            self.labels_capcalera[clau] = (text, lbl)
 
     def _toggle_tots(self):
         valor = self.var_tots.get()
         for _, var, _ in self.files_widgets:
             var.set(valor)
 
-    def carregar_dades(self, registres):
-        """Neteja la taula i carrega els registres donats."""
+    def _ordenar_per_columna(self, clau):
+        """Ordena la taula per la columna indicada. Alterna la direcció si ja està ordenada."""
+        if self.columna_ordenacio == clau:
+            self.ordre_ascendent = not self.ordre_ascendent
+        else:
+            self.columna_ordenacio = clau
+            self.ordre_ascendent = True
+
+        self._actualitzar_fletxes()
+
+        def clau_ordenacio(reg):
+            valor = reg.get(clau)
+            if valor is None:
+                return ""
+            if clau in ("id", "total"):
+                try:
+                    return float(valor)
+                except (ValueError, TypeError):
+                    return 0
+            return str(valor).lower()
+
+        self.registres_actuals.sort(key=clau_ordenacio, reverse=not self.ordre_ascendent)
+        self._renderitzar_files()
+
+    def _actualitzar_fletxes(self):
+        """Actualitza les etiquetes de capçalera amb la fletxa de direcció."""
+        for clau, (text_base, lbl) in self.labels_capcalera.items():
+            if clau == self.columna_ordenacio:
+                fletxa = " ▲" if self.ordre_ascendent else " ▼"
+                lbl.configure(text=text_base + fletxa)
+            else:
+                lbl.configure(text=text_base)
+
+    def _renderitzar_files(self):
+        """Renderitza les files a partir de self.registres_actuals."""
         for frame, _, _ in self.files_widgets:
             frame.destroy()
         self.files_widgets.clear()
         self.var_tots.set(False)
 
-        for registre in registres:
+        for registre in self.registres_actuals:
             self._afegir_fila(registre)
+
+    def carregar_dades(self, registres):
+        """Neteja la taula i carrega els registres donats."""
+        self.registres_actuals = list(registres)
+
+        if self.columna_ordenacio:
+            def clau_ordenacio(reg):
+                valor = reg.get(self.columna_ordenacio)
+                if valor is None:
+                    return ""
+                if self.columna_ordenacio in ("id", "total"):
+                    try:
+                        return float(valor)
+                    except (ValueError, TypeError):
+                        return 0
+                return str(valor).lower()
+
+            self.registres_actuals.sort(key=clau_ordenacio, reverse=not self.ordre_ascendent)
+
+        self._renderitzar_files()
 
     def _afegir_fila(self, registre):
         color_fons = "#333333" if len(self.files_widgets) % 2 == 0 else "#2b2b2b"
