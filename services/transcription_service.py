@@ -5,8 +5,10 @@ class TranscriptionService:
     """Servei d'alt nivell per al processament de documents."""
 
     def __init__(self, api_key=None, base_url=None, usar_costos=True):
-        cls = TranscriptorAmbCostos if usar_costos else TranscriptorTiquets
-        self.transcriptor = cls(api_key=api_key, base_url=base_url) if cls is TranscriptorTiquets else cls(api_key=api_key)
+        if usar_costos:
+            self.transcriptor = TranscriptorAmbCostos(api_key=api_key)
+        else:
+            self.transcriptor = TranscriptorTiquets(api_key=api_key, base_url=base_url)
 
     def validar_configuracio_metode(self, metode):
         if metode == "openai" and not self.transcriptor.client:
@@ -42,4 +44,3 @@ class TranscriptionService:
         if cancel_event is not None and cancel_event.is_set():
             return {"cancelled": True}
         return resultat
-
