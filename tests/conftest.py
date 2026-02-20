@@ -1,14 +1,27 @@
 import pytest
-import tempfile
 import os
-import json
+import shutil
+import tempfile
 
 
 @pytest.fixture
 def temp_dir():
-    """Crea un directori temporal per als tests."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
+    """Retorna un directori temporal dins del workspace de tests."""
+    base_tmp = os.path.join(os.getcwd(), ".test_tmp")
+    os.makedirs(base_tmp, exist_ok=True)
+    path = tempfile.mkdtemp(dir=base_tmp)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def restore_cwd():
+    """Assegura que cada test torna al directori original."""
+    cwd_original = os.getcwd()
+    yield
+    os.chdir(cwd_original)
 
 
 @pytest.fixture
