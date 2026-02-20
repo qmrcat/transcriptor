@@ -737,11 +737,66 @@ class GestorBaseDades:
                         dataAlta TEXT NOT NULL
                     )
                 """)
+                self._migrar_restriccions_unicitat(cursor)
                 conn.commit()
                 self.logger.info("Taula de transcripcions verificada/creada")
         except sqlite3.Error as e:
             self.logger.error(f"Error inicialitzant base de dades: {e}")
             raise
+
+    def _migrar_restriccions_unicitat(self, cursor):
+        """
+        Aplica restriccions d'unicitat per (nif, factura) de forma compatible amb BD existents.
+        """
+        try:
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripcions_nif_factura_unique
+                ON transcripcions(nif, factura)
+                WHERE nif IS NOT NULL
+                  AND factura IS NOT NULL
+                  AND TRIM(nif) <> ''
+                  AND TRIM(factura) <> ''
+            """)
+        except sqlite3.IntegrityError:
+            # Si hi ha duplicats històrics no trenquem l'arrencada: els triggers
+            # de sota impediran nous duplicats.
+            self.logger.warning(
+                "No s'ha pogut crear índex únic per duplicats existents de (nif, factura)."
+            )
+
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS tr_no_duplicate_factura_insert
+            BEFORE INSERT ON transcripcions
+            WHEN NEW.nif IS NOT NULL
+             AND NEW.factura IS NOT NULL
+             AND TRIM(NEW.nif) <> ''
+             AND TRIM(NEW.factura) <> ''
+             AND EXISTS (
+                 SELECT 1 FROM transcripcions
+                 WHERE nif = NEW.nif AND factura = NEW.factura
+             )
+            BEGIN
+                SELECT RAISE(ABORT, 'duplicate_nif_factura');
+            END;
+        """)
+
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS tr_no_duplicate_factura_update
+            BEFORE UPDATE OF nif, factura ON transcripcions
+            WHEN NEW.nif IS NOT NULL
+             AND NEW.factura IS NOT NULL
+             AND TRIM(NEW.nif) <> ''
+             AND TRIM(NEW.factura) <> ''
+             AND (NEW.nif <> OLD.nif OR NEW.factura <> OLD.factura)
+             AND EXISTS (
+                 SELECT 1 FROM transcripcions
+                 WHERE nif = NEW.nif AND factura = NEW.factura
+                   AND id <> OLD.id
+             )
+            BEGIN
+                SELECT RAISE(ABORT, 'duplicate_nif_factura');
+            END;
+        """)
 
     def inserir_transcripcio(self, nom, nif, factura, total, contingut_json, nom_document):
         """
@@ -771,6 +826,9 @@ class GestorBaseDades:
                 registre_id = cursor.lastrowid
                 self.logger.info(f"Transcripció inserida: ID={registre_id}, establiment={nom}")
                 return registre_id
+        except sqlite3.IntegrityError as e:
+            self.logger.warning(f"Violació d'integritat inserint transcripció: {e}")
+            raise
         except sqlite3.Error as e:
             self.logger.error(f"Error inserint transcripció: {e}")
             raise
@@ -895,6 +953,9 @@ class GestorBaseDades:
                 if actualitzats > 0:
                     self.logger.info(f"Transcripció actualitzada: ID={registre_id}, establiment={nom}")
                 return actualitzats > 0
+        except sqlite3.IntegrityError as e:
+            self.logger.warning(f"Violació d'integritat actualitzant transcripció {registre_id}: {e}")
+            raise
         except sqlite3.Error as e:
             self.logger.error(f"Error actualitzant transcripció {registre_id}: {e}")
             raise
