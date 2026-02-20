@@ -3,12 +3,12 @@ import sys
 import os
 import json
 from utils import GestorLogging
+from services.transcription_service import TranscriptionService
 
 # Inicialitzar logging abans que res
 GestorLogging.configurar()
 logger = GestorLogging.obtenir_logger("main")
 
-from logic import TranscriptorTiquets, TranscriptorAmbCostos
 from gui import InterficieGrafica
 
 
@@ -16,18 +16,15 @@ def executar_cli(args):
     logger.info(f"Mode CLI - Processant: {args.fitxer}")
     logger.debug(f"Paràmetres: metode={args.metode}, idioma={args.idioma}")
 
-    transcriptor = TranscriptorTiquets(api_key=args.api_key)
+    transcripcio_service = TranscriptionService(api_key=args.api_key, usar_costos=False)
     print(f"--- Processant: {args.fitxer} ---")
 
     try:
-        if args.metode == "ocr":
-            resultat = transcriptor.processar_imatge_ocr(args.fitxer, args.idioma)
-        elif args.metode == "openai":
-            resultat = transcriptor.processar_amb_openai(args.fitxer)
-        elif args.metode == "ocr-openai":
-            # Primer OCR local i després extracció estructurada amb IA
-            text_ocr = transcriptor.processar_imatge_ocr(args.fitxer, args.idioma)
-            resultat = transcriptor.processar_amb_openai(args.fitxer, text_ocr=text_ocr)
+        resultat = transcripcio_service.processar(
+            metode=args.metode,
+            ruta_fitxer=args.fitxer,
+            idioma=args.idioma
+        )
 
         if args.sortida:
             with open(args.sortida, "w", encoding="utf-8") as f:
