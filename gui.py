@@ -958,8 +958,8 @@ class InterficieGrafica(TkinterDnD.Tk):
                 self.state('zoomed')
             self.lift()
             self.focus_force()
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"No s'ha pogut restaurar la finestra principal: {e}")
 
     def _eliminar_plantilla_actual(self):
         """Elimina la plantilla seleccionada."""
