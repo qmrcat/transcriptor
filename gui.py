@@ -62,7 +62,10 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.pagina_actual = 0
         self.cache_pagines_pdf = {}  # Cache per pàgines ja carregades
 
+        self.processant = False
         self.cancellar_proces = False
+        self._cancel_event = threading.Event()
+        self._worker_thread = None
         self._audio_inicialitzat = False
 
         self._configurar_layout()
@@ -436,6 +439,10 @@ class InterficieGrafica(TkinterDnD.Tk):
 
 
     def _processar_fitxer(self):
+        if self.processant:
+            self.logger.debug("Ja hi ha un procés en marxa, s'ignora una nova petició")
+            return
+
         if not self.ruta_fitxer_actual:
             self.logger.warning("Intent de processar sense fitxer seleccionat")
             messagebox.showwarning("Atenció", "Selecciona un document primer.")
@@ -482,22 +489,32 @@ class InterficieGrafica(TkinterDnD.Tk):
                 self.logger.debug(f"Comprovació Ollama fallida (ignorant): {e}")
 
         self.logger.info(f"Processant fitxer: {self.ruta_fitxer_actual}")
+        ruta = self.ruta_fitxer_actual
+        instruccions = self._obtenir_instruccions_usuari()
 
         # 1. Preparem la interfície per a l'espera
         self.btn_processar.configure(state="disabled", text="PROCESSANT...")
         self.progress_bar.pack(fill="x", pady=5)
         self.progress_bar.start()  # Activa l'animació de "spinner"
+        self.btn_stop.pack(side="left", padx=5)
+        self.btn_stop.configure(text="Aturar", state="normal")
         self.txt_resultat.delete("1.0", "end")
         self.txt_resultat.insert("end", "⏳ Connectant amb el servidor de IA...")
 
         # 2. Iniciem el cronòmetre i el fil de processament
+        self._cancel_event.clear()
+        self.cancellar_proces = False
         self.inici_temps = time.time()
         self.processant = True
         self._actualitzar_cronometre_visual()
 
         # Executem la IA en un fil a part perquè la GUI no es congeli
-        thread = threading.Thread(target=self._executar_logica_ia)
-        thread.start()
+        self._worker_thread = threading.Thread(
+            target=self._executar_logica_ia,
+            args=(metode, ruta, instruccions),
+            daemon=True
+        )
+        self._worker_thread.start()
 
 
     def _actualitzar_cronometre_visual(self):
@@ -508,24 +525,29 @@ class InterficieGrafica(TkinterDnD.Tk):
             self.after(100, self._actualitzar_cronometre_visual)
 
 
-    def _executar_logica_ia(self):
+    def _executar_logica_ia(self, metode, ruta_fitxer, instruccions):
         """Aquest mètode corre en segon pla."""
-        metode = self.metode_var.get()
-        instruccions = self._obtenir_instruccions_usuari()
         self.logger.debug(f"Fil de processament iniciat (mètode: {metode}, instruccions: {bool(instruccions)})")
 
         try:
+            if self._cancel_event.is_set():
+                self.after(0, lambda: self._finalitzar_processament({"cancelled": True}))
+                return
+
             if metode == "ocr":
-                res = self.transcriptor.processar_imatge_ocr(self.ruta_fitxer_actual)
+                res = self.transcriptor.processar_imatge_ocr(ruta_fitxer)
             elif metode == "openai":
-                res = self.transcriptor.processar_amb_openai(self.ruta_fitxer_actual, instruccions_extra=instruccions)
+                res = self.transcriptor.processar_amb_openai(ruta_fitxer, instruccions_extra=instruccions)
             elif metode == "claude":
-                res = self.transcriptor.processar_amb_claude(self.ruta_fitxer_actual, instruccions_extra=instruccions)
+                res = self.transcriptor.processar_amb_claude(ruta_fitxer, instruccions_extra=instruccions)
             elif metode == "ollama":
-                res = self.transcriptor.processar_amb_ollama(self.ruta_fitxer_actual, instruccions_extra=instruccions)
+                res = self.transcriptor.processar_amb_ollama(ruta_fitxer, instruccions_extra=instruccions)
 
             self.logger.debug("Processament completat, tornant al fil principal")
             # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
+            if self._cancel_event.is_set():
+                self.after(0, lambda: self._finalitzar_processament({"cancelled": True}))
+                return
             self.after(0, lambda: self._finalitzar_processament(res))
 
         except Exception as e:
@@ -534,8 +556,13 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _sollicitar_aturada(self):
         """Activa la bandera per aturar el processament per lots."""
+        if not self.processant:
+            return
         self.cancellar_proces = True
+        self._cancel_event.set()
         self.btn_stop.configure(text="Aturant...", state="disabled")
+        self.txt_resultat.delete("1.0", "end")
+        self.txt_resultat.insert("end", "🛑 Cancel·lació sol·licitada. Esperant finalització segura...")
 
 
     # def _executar_logica_ia(self):
@@ -589,10 +616,13 @@ class InterficieGrafica(TkinterDnD.Tk):
     def _finalitzar_processament(self, resultat):
         """Restaura la interfície i mostra el resultat final."""
         self.processant = False
+        self._worker_thread = None
         temps_final = time.time() - self.inici_temps
 
         # Verificar si hi ha error
-        if isinstance(resultat, dict) and "error" in resultat:
+        if isinstance(resultat, dict) and resultat.get("cancelled"):
+            self.logger.info("Processament cancel·lat per l'usuari")
+        elif isinstance(resultat, dict) and "error" in resultat:
             self.logger.error(f"Processament finalitzat amb error: {resultat['error']}")
         else:
             self.logger.info(f"Processament completat en {temps_final:.2f}s")
@@ -605,7 +635,11 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.btn_stop.configure(text="Aturar", state="normal")
 
         self.txt_resultat.delete("1.0", "end")
-        if isinstance(resultat, dict):
+        if isinstance(resultat, dict) and resultat.get("cancelled"):
+            self.txt_resultat.insert("end", "🛑 Procés cancel·lat per l'usuari.")
+            self.btn_editar.configure(state="disabled")
+            self.btn_desar_bd.configure(state="disabled")
+        elif isinstance(resultat, dict):
             self.txt_resultat.insert("end", json.dumps(resultat, indent=4, ensure_ascii=False))
             # Activar botons d'edició i desar BD si el resultat és un dict vàlid i no és un error
             if "error" not in resultat:
