@@ -53,6 +53,9 @@ Aplicacio autonoma per gestionar els registres de transcripcions desats a SQLite
 | `gui.py` | Interficie grafica amb drag-drop, zoom, editor JSON, desar a BD |
 | `logic.py` | Processament OCR, OpenAI, Claude i Ollama |
 | `utils.py` | Configuracio, logging, plantilles, costos, base de dades |
+| `services/transcription_service.py` | Capa de servei per orquestrar mètodes de transcripció |
+| `services/storage_service.py` | Capa de servei per persistència i gestió d'errors de duplicat |
+| `ui/json_form_utils.py` | Construcció/normalització compartida de JSON des de formularis |
 | `manteniment_bd.py` | App autonoma de manteniment CRUD de la BD de transcripcions |
 | `consultar_costos_openai.py` | Eina CLI d'auditoria de costos d'API |
 | `exemple_us.py` | Script d'exemple per processament per lots |
