@@ -31,7 +31,10 @@ def executar_cli(args):
 
         if args.sortida:
             with open(args.sortida, "w", encoding="utf-8") as f:
-                f.write(str(resultat))
+                if isinstance(resultat, (dict, list)):
+                    json.dump(resultat, f, ensure_ascii=False, indent=2)
+                else:
+                    f.write(str(resultat))
             logger.info(f"Resultat desat a: {args.sortida}")
             print(f"Resultat desat a: {args.sortida}")
         else:
