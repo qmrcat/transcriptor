@@ -14,6 +14,7 @@ import json
 import os
 import csv
 import math
+import sqlite3
 from datetime import datetime
 
 from utils import GestorBaseDades, GestorLogging
@@ -887,6 +888,13 @@ class AplicacioManteniment(ctk.CTk):
                     self.logger.info(f"Registre actualitzat: ID={registre['id']}")
 
                 self._carregar_dades()
+            except sqlite3.IntegrityError:
+                self.logger.warning("Duplicat detectat per restricció de BD (nif, factura)")
+                messagebox.showerror(
+                    "Duplicat detectat",
+                    "Ja existeix una factura amb aquest NIF i número.",
+                    parent=self
+                )
             except Exception as e:
                 self.logger.error(f"Error desant registre: {e}")
                 messagebox.showerror("Error", f"Error desant registre:\n{e}")

@@ -4,6 +4,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image, ImageTk
 import os
 import json
+import sqlite3
 import pandas as pd
 from logic import TranscriptorTiquets, TranscriptorAmbCostos
 import pdf2image
@@ -1504,6 +1505,11 @@ class InterficieGrafica(TkinterDnD.Tk):
             self._tancar_dialeg_desar_bd()
             messagebox.showinfo("Èxit", f"Transcripció desada correctament!\nID: {registre_id}")
 
+        except sqlite3.IntegrityError:
+            self.logger.warning("Duplicat detectat per restricció de BD (nif, factura)")
+            self.lbl_advertencia_bd.configure(
+                text="⚠ Ja existeix una factura amb aquest NIF i número (bloquejat per BD)"
+            )
         except Exception as e:
             self.logger.error(f"Error desant a BD: {e}")
             messagebox.showerror("Error", f"Error desant a la base de dades:\n{e}")
