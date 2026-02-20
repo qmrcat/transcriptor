@@ -17,7 +17,12 @@ import math
 import sqlite3
 from datetime import datetime
 
-from utils import GestorBaseDades, GestorLogging
+from utils import (
+    GestorBaseDades,
+    GestorLogging,
+    FormatTranscripcio,
+    ValidadorJSONTranscripcio,
+)
 
 
 # =============================================================================
@@ -309,11 +314,8 @@ class EditorJSON(ctk.CTkToplevel):
 
         for camp, entry in self.entries_capcalera.items():
             valor = entry.get().strip()
-            if camp == "total" and valor:
-                try:
-                    valor = float(valor.replace(",", "."))
-                except ValueError:
-                    pass
+            if camp == "total":
+                valor = FormatTranscripcio.normalitzar_import(valor)
             resultat[camp] = valor if valor else None
 
         articles = []
@@ -321,11 +323,12 @@ class EditorJSON(ctk.CTkToplevel):
             article = {}
             for camp, entry in entries.items():
                 valor = entry.get().strip()
-                if camp in ("quantitat", "preu", "importBase", "percentatgeIVA", "importIVA", "importTotal") and valor:
-                    try:
-                        valor = float(valor.replace(",", "."))
-                    except ValueError:
-                        pass
+                if camp == "quantitat":
+                    valor = FormatTranscripcio.parsejar_quantitat(valor)
+                elif camp in ("preu", "importBase", "importIVA", "importTotal"):
+                    valor = FormatTranscripcio.normalitzar_import(valor)
+                elif camp == "percentatgeIVA":
+                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
                 article[camp] = valor if valor else None
             articles.append(article)
         resultat["articles"] = articles
@@ -335,11 +338,10 @@ class EditorJSON(ctk.CTkToplevel):
             impost = {}
             for camp, entry in entries.items():
                 valor = entry.get().strip()
-                if valor:
-                    try:
-                        valor = float(valor.replace(",", "."))
-                    except ValueError:
-                        pass
+                if camp in ("importBaseIVA", "quotaIVA"):
+                    valor = FormatTranscripcio.normalitzar_import(valor)
+                elif camp == "percentatgeIVA":
+                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
                 impost[camp] = valor if valor else None
             impostos.append(impost)
         resultat["impostos"] = impostos
@@ -362,9 +364,13 @@ class EditorJSON(ctk.CTkToplevel):
     def _desar(self):
         dades_bd = self._recollir_dades_bd()
         dades_json = self._construir_json()
+        valid, errors = ValidadorJSONTranscripcio.validar(dades_json)
 
         if not dades_bd.get("nom"):
             messagebox.showwarning("Atenció", "El camp Establiment és obligatori.", parent=self)
+            return
+        if not valid:
+            messagebox.showerror("Error de validació", f"JSON invàlid:\n{errors[0]}", parent=self)
             return
 
         if self.on_desar:
@@ -951,16 +957,31 @@ class AplicacioManteniment(ctk.CTk):
             return
 
         dades_export = []
+        invalids = []
         for reg in seleccionats:
             reg_complet = self.gestor_bd.obtenir_transcripcio(reg["id"])
             if reg_complet:
                 item = dict(reg_complet)
                 # Parsejar contingutJSON com a dict
                 try:
-                    item["contingutJSON"] = json.loads(item.get("contingutJSON", "{}"))
+                    contingut_json = json.loads(item.get("contingutJSON", "{}"))
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    invalids.append(reg.get("id"))
+                    continue
+                valid, _ = ValidadorJSONTranscripcio.validar(contingut_json)
+                if not valid:
+                    invalids.append(reg.get("id"))
+                    continue
+                item["contingutJSON"] = contingut_json
                 dades_export.append(item)
+
+        if invalids:
+            messagebox.showerror(
+                "Exportació aturada",
+                f"Hi ha {len(invalids)} registre(s) amb JSON invàlid. Corregeix-los abans d'exportar.",
+                parent=self
+            )
+            return
 
         try:
             with open(ruta, "w", encoding="utf-8") as f:
@@ -988,6 +1009,7 @@ class AplicacioManteniment(ctk.CTk):
 
         try:
             files_csv = []
+            invalids = []
             for reg in seleccionats:
                 reg_complet = self.gestor_bd.obtenir_transcripcio(reg["id"])
                 if not reg_complet:
@@ -1006,16 +1028,27 @@ class AplicacioManteniment(ctk.CTk):
                 # Extreure camps del JSON
                 try:
                     dades_json = json.loads(reg_complet.get("contingutJSON", "{}"))
+                    valid, _ = ValidadorJSONTranscripcio.validar(dades_json)
+                    if not valid:
+                        invalids.append(reg.get("id"))
+                        continue
                     fila["forma_pagament"] = dades_json.get("forma_pagament", "")
                     fila["data_document"] = dades_json.get("data", "")
                     articles = dades_json.get("articles", [])
                     fila["num_articles"] = len(articles)
                 except (json.JSONDecodeError, TypeError):
-                    fila["forma_pagament"] = ""
-                    fila["data_document"] = ""
-                    fila["num_articles"] = 0
+                    invalids.append(reg.get("id"))
+                    continue
 
                 files_csv.append(fila)
+
+            if invalids:
+                messagebox.showerror(
+                    "Exportació aturada",
+                    f"Hi ha {len(invalids)} registre(s) amb JSON invàlid. Corregeix-los abans d'exportar.",
+                    parent=self
+                )
+                return
 
             if files_csv:
                 camps = list(files_csv[0].keys())
