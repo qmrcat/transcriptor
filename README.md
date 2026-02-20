@@ -56,6 +56,8 @@ Aplicacio autonoma per gestionar els registres de transcripcions desats a SQLite
 | `services/transcription_service.py` | Capa de servei per orquestrar mètodes de transcripció |
 | `services/storage_service.py` | Capa de servei per persistència i gestió d'errors de duplicat |
 | `ui/json_form_utils.py` | Construcció/normalització compartida de JSON des de formularis |
+| `ui/pdf_viewer_mixin.py` | Mixin UI per previsualització d'imatges/PDF, zoom i navegació |
+| `ui/processing_actions_mixin.py` | Mixin UI per processament, cronòmetre, cancel·lació i exportació |
 | `manteniment_bd.py` | App autonoma de manteniment CRUD de la BD de transcripcions |
 | `consultar_costos_openai.py` | Eina CLI d'auditoria de costos d'API |
 | `exemple_us.py` | Script d'exemple per processament per lots |
