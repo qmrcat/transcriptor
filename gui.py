@@ -4,9 +4,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 from PIL import Image, ImageTk
 import os
 import json
-import sqlite3
 import pandas as pd
-from logic import TranscriptorTiquets, TranscriptorAmbCostos
 import pdf2image
 import time
 import subprocess
@@ -17,10 +15,11 @@ from utils import (
     GestorConfiguracio,
     GestorLogging,
     GestorPlantilles,
-    GestorBaseDades,
     FormatTranscripcio,
     ValidadorJSONTranscripcio,
 )
+from services.transcription_service import TranscriptionService
+from services.storage_service import StorageService, DuplicateDocumentError
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -53,9 +52,11 @@ class InterficieGrafica(TkinterDnD.Tk):
         ctk.set_appearance_mode("dark")
 
         # Inicialització lògica
-        self.transcriptor = TranscriptorAmbCostos(api_key=self.config_dades.get("api_key"))
+        self.transcription_service = TranscriptionService(api_key=self.config_dades.get("api_key"))
+        self.transcriptor = self.transcription_service.transcriptor
         self.gestor_plantilles = GestorPlantilles()
-        self.gestor_bd = GestorBaseDades()
+        self.storage_service = StorageService()
+        self.gestor_bd = self.storage_service.gestor_bd
         self.plantilla_actual_id = None  # ID de la plantilla seleccionada
         self._estat_finestra_anterior = 'zoomed'  # Estat per defecte
 
@@ -459,19 +460,12 @@ class InterficieGrafica(TkinterDnD.Tk):
         metode = self.metode_var.get()
         self.logger.info(f"Iniciant processament amb mètode: {metode}")
 
-        if metode == "openai" and not self.transcriptor.client:
-            self.logger.error("Intent d'usar OpenAI sense API key")
+        error_config = self.transcription_service.validar_configuracio_metode(metode)
+        if error_config:
+            self.logger.error(f"Configuració invàlida per mètode {metode}: {error_config}")
             messagebox.showerror(
                 "API Key no configurada",
-                "Per utilitzar OpenAI, configura OPENAI_API_KEY al fitxer .env o config.json"
-            )
-            return
-
-        if metode == "claude" and not self.transcriptor.client_claude:
-            self.logger.error("Intent d'usar Claude sense API key")
-            messagebox.showerror(
-                "API Key no configurada",
-                "Per utilitzar Claude, configura ANTHROPIC_API_KEY al fitxer .env"
+                error_config
             )
             return
 
@@ -541,14 +535,13 @@ class InterficieGrafica(TkinterDnD.Tk):
                 self.after(0, lambda: self._finalitzar_processament({"cancelled": True}))
                 return
 
-            if metode == "ocr":
-                res = self.transcriptor.processar_imatge_ocr(ruta_fitxer)
-            elif metode == "openai":
-                res = self.transcriptor.processar_amb_openai(ruta_fitxer, instruccions_extra=instruccions)
-            elif metode == "claude":
-                res = self.transcriptor.processar_amb_claude(ruta_fitxer, instruccions_extra=instruccions)
-            elif metode == "ollama":
-                res = self.transcriptor.processar_amb_ollama(ruta_fitxer, instruccions_extra=instruccions)
+            res = self.transcription_service.processar(
+                metode=metode,
+                ruta_fitxer=ruta_fitxer,
+                idioma="cat+spa",
+                instruccions_extra=instruccions,
+                cancel_event=self._cancel_event
+            )
 
             self.logger.debug("Processament completat, tornant al fil principal")
             # Un cop tenim la resposta, tornem al fil principal per actualitzar la GUI
@@ -1460,7 +1453,7 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         # Comprovar si la factura ja existeix
         if nif and factura:
-            if self.gestor_bd.existeix_factura(nif, factura):
+            if self.storage_service.existeix_factura(nif, factura):
                 self.lbl_advertencia_bd.configure(
                     text="⚠ Ja existeix una factura amb aquest NIF i número!"
                 )
@@ -1537,7 +1530,7 @@ class InterficieGrafica(TkinterDnD.Tk):
                 return
 
         # Comprovar si ja existeix
-        if nif and factura and self.gestor_bd.existeix_factura(nif, factura):
+        if nif and factura and self.storage_service.existeix_factura(nif, factura):
             confirmar = messagebox.askyesno(
                 "Duplicat detectat",
                 f"Ja existeix una factura amb NIF '{nif}' i número '{factura}'.\n\n"
@@ -1548,7 +1541,7 @@ class InterficieGrafica(TkinterDnD.Tk):
 
         try:
             # Inserir a la base de dades
-            registre_id = self.gestor_bd.inserir_transcripcio(
+            registre_id = self.storage_service.inserir_transcripcio(
                 nom=nom,
                 nif=nif,
                 factura=factura,
@@ -1561,7 +1554,7 @@ class InterficieGrafica(TkinterDnD.Tk):
             self._tancar_dialeg_desar_bd()
             messagebox.showinfo("Èxit", f"Transcripció desada correctament!\nID: {registre_id}")
 
-        except sqlite3.IntegrityError:
+        except DuplicateDocumentError:
             self.logger.warning("Duplicat detectat per restricció de BD (nif, factura)")
             self.lbl_advertencia_bd.configure(
                 text="⚠ Ja existeix una factura amb aquest NIF i número (bloquejat per BD)"

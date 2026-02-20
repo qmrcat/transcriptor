@@ -14,15 +14,14 @@ import json
 import os
 import csv
 import math
-import sqlite3
 from datetime import datetime
 
 from utils import (
-    GestorBaseDades,
     GestorLogging,
     FormatTranscripcio,
     ValidadorJSONTranscripcio,
 )
+from services.storage_service import StorageService, DuplicateDocumentError
 
 
 # =============================================================================
@@ -585,7 +584,8 @@ class AplicacioManteniment(ctk.CTk):
         super().__init__()
 
         self.logger = GestorLogging.obtenir_logger("manteniment.AplicacioManteniment")
-        self.gestor_bd = GestorBaseDades()
+        self.storage_service = StorageService()
+        self.gestor_bd = self.storage_service.gestor_bd
 
         self.title("Manteniment BD - Transcripcions")
         self.geometry("1100x700")
@@ -872,7 +872,7 @@ class AplicacioManteniment(ctk.CTk):
 
             try:
                 if mode == "crear":
-                    self.gestor_bd.inserir_transcripcio(
+                    self.storage_service.inserir_transcripcio(
                         nom=dades_bd_form.get("nom", ""),
                         nif=dades_bd_form.get("nif", ""),
                         factura=dades_bd_form.get("factura", ""),
@@ -882,7 +882,7 @@ class AplicacioManteniment(ctk.CTk):
                     )
                     self.logger.info("Registre creat")
                 elif mode == "editar" and registre:
-                    self.gestor_bd.actualitzar_transcripcio(
+                    self.storage_service.actualitzar_transcripcio(
                         registre_id=registre["id"],
                         nom=dades_bd_form.get("nom", ""),
                         nif=dades_bd_form.get("nif", ""),
@@ -894,7 +894,7 @@ class AplicacioManteniment(ctk.CTk):
                     self.logger.info(f"Registre actualitzat: ID={registre['id']}")
 
                 self._carregar_dades()
-            except sqlite3.IntegrityError:
+            except DuplicateDocumentError:
                 self.logger.warning("Duplicat detectat per restricció de BD (nif, factura)")
                 messagebox.showerror(
                     "Duplicat detectat",
