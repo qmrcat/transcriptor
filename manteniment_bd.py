@@ -913,7 +913,8 @@ class AplicacioManteniment(ctk.CTk):
         for reg in seleccionats:
             try:
                 self.gestor_bd.eliminar_transcripcio(reg["id"])
-            except Exception:
+            except Exception as e:
+                self.logger.warning(f"No s'ha pogut eliminar el registre ID={reg.get('id')}: {e}")
                 errors += 1
 
         if errors:
