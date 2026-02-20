@@ -5,6 +5,7 @@ import time
 from tkinter import filedialog, messagebox
 
 import pandas as pd
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
 
 from utils import ValidadorJSONTranscripcio
@@ -248,4 +249,3 @@ class ProcessingActionsMixin:
         self.plantilla_var.set("Cap (configuració manual)")
         self.btn_veure_doc_ref.configure(state="disabled")
         self.btn_eliminar_plantilla.configure(state="disabled")
-
