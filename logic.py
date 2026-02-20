@@ -100,7 +100,7 @@ Aclariments importants:
 
 Correspondència de columnes habituals:
 - "descripció": pot aparèixer com descripcio, concepte, detall, producte, article o nom.
-- "quantitat": pot aparèixer com cant, unitats, uni, quantitat, QT, qty o no aparèixer.
+- "quantitat": pot aparèixer com cant, unitats, uni, un, quantitat, QT, qty o no aparèixer, la quantitat pot ser pes (kg).
 - "preu": pot aparèixer com preu, precio, PVP o base.
 - "importBase": pot aparèixer com base, import base, importe base o subtotal.
 - "percentatgeIVA": pot aparèixer com %IVA, tipus IVA, % IVA o %.
@@ -133,7 +133,11 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
 
         if ruta_imatge.lower().endswith(".pdf"):
             self.logger.debug(f"Convertint PDF a imatge: {ruta_imatge}")
-            pagines = pdf2image.convert_from_path(ruta_imatge)
+            pagines = pdf2image.convert_from_path(
+                ruta_imatge,
+                first_page=1,
+                last_page=1
+            )
             if not pagines:
                 self.logger.error("El PDF no conté cap pàgina")
                 raise ValueError("El PDF no conté cap pàgina.")
@@ -224,8 +228,12 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
             if hasattr(self, 'registrar_cost'):
                 self.registrar_cost(model, tokens_in, tokens_out)
 
-            resultat = json.loads(contingut)
-            self.logger.debug(f"JSON parsejat correctament: {list(resultat.keys())}")
+            try:
+                resultat = json.loads(contingut)
+                self.logger.debug(f"JSON parsejat correctament: {list(resultat.keys())}")
+            except json.JSONDecodeError as e:
+                resultat = contingut
+
             return resultat
 
         except Exception as e:
@@ -356,8 +364,12 @@ La "forma_pagament" ha de ser una cadena curta indicant el mètode de pagament (
                 contingut_net = contingut_net[:-3]  # Eliminar ``` final
             contingut_net = contingut_net.strip()
 
-            resultat = json.loads(contingut_net)
-            self.logger.debug(f"JSON parsejat correctament: {list(resultat.keys())}")
+            try:
+                resultat = json.loads(contingut_net)
+                self.logger.debug(f"JSON parsejat correctament: {list(resultat.keys())}")
+            except json.JSONDecodeError as e:
+                resultat = contingut_net
+
             return resultat
 
         except json.JSONDecodeError as e:
