@@ -24,6 +24,10 @@ def executar_cli(args):
             resultat = transcriptor.processar_imatge_ocr(args.fitxer, args.idioma)
         elif args.metode == "openai":
             resultat = transcriptor.processar_amb_openai(args.fitxer)
+        elif args.metode == "ocr-openai":
+            # Primer OCR local i després extracció estructurada amb IA
+            text_ocr = transcriptor.processar_imatge_ocr(args.fitxer, args.idioma)
+            resultat = transcriptor.processar_amb_openai(args.fitxer, text_ocr=text_ocr)
 
         if args.sortida:
             with open(args.sortida, "w", encoding="utf-8") as f:
