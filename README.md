@@ -58,6 +58,7 @@ Aplicacio autonoma per gestionar els registres de transcripcions desats a SQLite
 | `ui/json_form_utils.py` | Construcció/normalització compartida de JSON des de formularis |
 | `ui/pdf_viewer_mixin.py` | Mixin UI per previsualització d'imatges/PDF, zoom i navegació |
 | `ui/processing_actions_mixin.py` | Mixin UI per processament, cronòmetre, cancel·lació i exportació |
+| `ui/template_editor_mixin.py` | Mixin UI per gestió de plantilles i editor visual de JSON |
 | `manteniment_bd.py` | App autonoma de manteniment CRUD de la BD de transcripcions |
 | `consultar_costos_openai.py` | Eina CLI d'auditoria de costos d'API |
 | `exemple_us.py` | Script d'exemple per processament per lots |
