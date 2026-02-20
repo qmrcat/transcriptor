@@ -13,7 +13,14 @@ import subprocess
 import sys
 import threading  # Perquè la interfície no es bloquegi mentre esperem la IA
 import winsound  # Per a Windows
-from utils import GestorConfiguracio, GestorLogging, GestorPlantilles, GestorBaseDades
+from utils import (
+    GestorConfiguracio,
+    GestorLogging,
+    GestorPlantilles,
+    GestorBaseDades,
+    FormatTranscripcio,
+    ValidadorJSONTranscripcio,
+)
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -703,6 +710,15 @@ class InterficieGrafica(TkinterDnD.Tk):
         contingut = self.txt_resultat.get("1.0", "end").strip()
         try:
             dades = json.loads(contingut)
+            valid, errors = ValidadorJSONTranscripcio.validar(dades)
+            if not valid:
+                self.logger.warning(f"Exportació Excel bloquejada per JSON invàlid: {errors[:3]}")
+                messagebox.showerror(
+                    "Error d'exportació",
+                    "El JSON no compleix l'esquema esperat.\n"
+                    f"Primer error: {errors[0]}"
+                )
+                return
             df = pd.DataFrame(dades.get("articles", []))
             ruta = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
             if ruta:
@@ -1264,13 +1280,8 @@ class InterficieGrafica(TkinterDnD.Tk):
         # Capçalera
         for camp, entry in self.editor_entries_capcalera.items():
             valor = entry.get().strip()
-            # Convertir a número si és el camp total
-            if camp == "total" and valor:
-                try:
-                    # Acceptar comes i punts com a separador decimal
-                    valor = float(valor.replace(",", "."))
-                except ValueError:
-                    pass
+            if camp == "total":
+                valor = FormatTranscripcio.normalitzar_import(valor)
             resultat[camp] = valor if valor else None
 
         # Articles
@@ -1279,12 +1290,12 @@ class InterficieGrafica(TkinterDnD.Tk):
             article = {}
             for camp, entry in entries.items():
                 valor = entry.get().strip()
-                # Convertir camps numèrics
-                if camp in ("quantitat", "preu", "importBase", "percentatgeIVA", "importIVA", "importTotal") and valor:
-                    try:
-                        valor = float(valor.replace(",", "."))
-                    except ValueError:
-                        pass
+                if camp == "quantitat":
+                    valor = FormatTranscripcio.parsejar_quantitat(valor)
+                elif camp in ("preu", "importBase", "importIVA", "importTotal"):
+                    valor = FormatTranscripcio.normalitzar_import(valor)
+                elif camp == "percentatgeIVA":
+                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
                 article[camp] = valor if valor else None
             articles.append(article)
         resultat["articles"] = articles
@@ -1295,12 +1306,10 @@ class InterficieGrafica(TkinterDnD.Tk):
             impost = {}
             for camp, entry in entries.items():
                 valor = entry.get().strip()
-                # Convertir camps numèrics
-                if valor:
-                    try:
-                        valor = float(valor.replace(",", "."))
-                    except ValueError:
-                        pass
+                if camp in ("importBaseIVA", "quotaIVA"):
+                    valor = FormatTranscripcio.normalitzar_import(valor)
+                elif camp == "percentatgeIVA":
+                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
                 impost[camp] = valor if valor else None
             impostos.append(impost)
         resultat["impostos"] = impostos
@@ -1311,6 +1320,10 @@ class InterficieGrafica(TkinterDnD.Tk):
         """Desa l'edició i actualitza l'àrea de resultats."""
         try:
             dades = self._construir_json_des_de_formulari()
+            valid, errors = ValidadorJSONTranscripcio.validar(dades)
+            if not valid:
+                messagebox.showerror("Error de validació", f"JSON invàlid:\n{errors[0]}")
+                return
             json_formatat = json.dumps(dades, indent=4, ensure_ascii=False)
 
             # Actualitzar l'àrea de resultats
@@ -1355,6 +1368,15 @@ class InterficieGrafica(TkinterDnD.Tk):
             dades = json.loads(contingut)
         except json.JSONDecodeError:
             messagebox.showerror("Error", "El contingut no és JSON vàlid.")
+            return
+
+        valid, errors = ValidadorJSONTranscripcio.validar(dades)
+        if not valid:
+            messagebox.showerror(
+                "Error de validació",
+                "No es pot desar a BD perquè el JSON no compleix l'esquema.\n"
+                f"Primer error: {errors[0]}"
+            )
             return
 
         # Desar l'estat actual de la finestra principal
