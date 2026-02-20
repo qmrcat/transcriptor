@@ -15,11 +15,11 @@ from utils import (
     GestorConfiguracio,
     GestorLogging,
     GestorPlantilles,
-    FormatTranscripcio,
     ValidadorJSONTranscripcio,
 )
 from services.transcription_service import TranscriptionService
 from services.storage_service import StorageService, DuplicateDocumentError
+from ui.json_form_utils import construir_json_transcripcio
 
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
@@ -1268,46 +1268,11 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _construir_json_des_de_formulari(self):
         """Recull tots els valors dels widgets i genera el diccionari."""
-        resultat = {}
-
-        # Capçalera
-        for camp, entry in self.editor_entries_capcalera.items():
-            valor = entry.get().strip()
-            if camp == "total":
-                valor = FormatTranscripcio.normalitzar_import(valor)
-            resultat[camp] = valor if valor else None
-
-        # Articles
-        articles = []
-        for fila, entries in self.editor_files_articles:
-            article = {}
-            for camp, entry in entries.items():
-                valor = entry.get().strip()
-                if camp == "quantitat":
-                    valor = FormatTranscripcio.parsejar_quantitat(valor)
-                elif camp in ("preu", "importBase", "importIVA", "importTotal"):
-                    valor = FormatTranscripcio.normalitzar_import(valor)
-                elif camp == "percentatgeIVA":
-                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
-                article[camp] = valor if valor else None
-            articles.append(article)
-        resultat["articles"] = articles
-
-        # Impostos
-        impostos = []
-        for fila, entries in self.editor_files_impostos:
-            impost = {}
-            for camp, entry in entries.items():
-                valor = entry.get().strip()
-                if camp in ("importBaseIVA", "quotaIVA"):
-                    valor = FormatTranscripcio.normalitzar_import(valor)
-                elif camp == "percentatgeIVA":
-                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
-                impost[camp] = valor if valor else None
-            impostos.append(impost)
-        resultat["impostos"] = impostos
-
-        return resultat
+        return construir_json_transcripcio(
+            self.editor_entries_capcalera,
+            self.editor_files_articles,
+            self.editor_files_impostos
+        )
 
     def _desar_edicio(self):
         """Desa l'edició i actualitza l'àrea de resultats."""

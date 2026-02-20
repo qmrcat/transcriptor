@@ -18,10 +18,10 @@ from datetime import datetime
 
 from utils import (
     GestorLogging,
-    FormatTranscripcio,
     ValidadorJSONTranscripcio,
 )
 from services.storage_service import StorageService, DuplicateDocumentError
+from ui.json_form_utils import construir_json_transcripcio
 
 
 # =============================================================================
@@ -309,43 +309,11 @@ class EditorJSON(ctk.CTkToplevel):
 
     def _construir_json(self):
         """Recull els valors del formulari i retorna el dict JSON."""
-        resultat = {}
-
-        for camp, entry in self.entries_capcalera.items():
-            valor = entry.get().strip()
-            if camp == "total":
-                valor = FormatTranscripcio.normalitzar_import(valor)
-            resultat[camp] = valor if valor else None
-
-        articles = []
-        for _, entries in self.files_articles:
-            article = {}
-            for camp, entry in entries.items():
-                valor = entry.get().strip()
-                if camp == "quantitat":
-                    valor = FormatTranscripcio.parsejar_quantitat(valor)
-                elif camp in ("preu", "importBase", "importIVA", "importTotal"):
-                    valor = FormatTranscripcio.normalitzar_import(valor)
-                elif camp == "percentatgeIVA":
-                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
-                article[camp] = valor if valor else None
-            articles.append(article)
-        resultat["articles"] = articles
-
-        impostos = []
-        for _, entries in self.files_impostos:
-            impost = {}
-            for camp, entry in entries.items():
-                valor = entry.get().strip()
-                if camp in ("importBaseIVA", "quotaIVA"):
-                    valor = FormatTranscripcio.normalitzar_import(valor)
-                elif camp == "percentatgeIVA":
-                    valor = FormatTranscripcio.normalitzar_percentatge(valor)
-                impost[camp] = valor if valor else None
-            impostos.append(impost)
-        resultat["impostos"] = impostos
-
-        return resultat
+        return construir_json_transcripcio(
+            self.entries_capcalera,
+            self.files_articles,
+            self.files_impostos
+        )
 
     def _recollir_dades_bd(self):
         """Recull els camps de BD del formulari."""
