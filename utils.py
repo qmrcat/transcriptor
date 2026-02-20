@@ -8,6 +8,7 @@ import functools
 import time
 import threading
 import sqlite3
+import re
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from contextlib import contextmanager
@@ -703,6 +704,134 @@ class CalculadoraCostos:
         except Exception as e:
             self.logger.error(f"Error llegint historial de costos: {e}")
         return []
+
+
+class FormatTranscripcio:
+    """Utilitats per normalitzar valors de transcripció."""
+
+    _RE_IMPORT = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+    _RE_PERCENT = re.compile(r"^-?\d+(?:[.,]\d+)?%?$")
+
+    @staticmethod
+    def normalitzar_import(valor):
+        if valor is None:
+            return None
+        text = str(valor).strip()
+        if not text:
+            return None
+        if not FormatTranscripcio._RE_IMPORT.match(text):
+            return text
+        return text.replace(".", ",")
+
+    @staticmethod
+    def normalitzar_percentatge(valor):
+        if valor is None:
+            return None
+        text = str(valor).strip()
+        if not text:
+            return None
+        if not FormatTranscripcio._RE_PERCENT.match(text):
+            return text
+        text = text.replace(".", ",")
+        if not text.endswith("%"):
+            text += "%"
+        return text
+
+    @staticmethod
+    def parsejar_quantitat(valor):
+        if valor is None:
+            return None
+        text = str(valor).strip()
+        if not text:
+            return None
+        normalitzat = text.replace(",", ".")
+        try:
+            quantitat = float(normalitzat)
+            return int(quantitat) if quantitat.is_integer() else quantitat
+        except ValueError:
+            return text
+
+
+class ValidadorJSONTranscripcio:
+    """Valida l'estructura i els formats bàsics del JSON de transcripció."""
+
+    _RE_DATA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+    _RE_HORA = re.compile(r"^\d{2}:\d{2}$")
+    _RE_IMPORT = re.compile(r"^-?\d+(?:,\d+)?$")
+    _RE_PERCENT = re.compile(r"^-?\d+(?:,\d+)?%$")
+
+    _CAMPS_IMPORT_CAPCALERA = ("total",)
+    _CAMPS_IMPORT_ARTICLE = ("preu", "importBase", "importIVA", "importTotal")
+    _CAMPS_IMPORT_IMPOST = ("importBaseIVA", "quotaIVA")
+    _CAMPS_PERCENT = ("percentatgeIVA",)
+
+    @classmethod
+    def validar(cls, dades):
+        errors = []
+
+        if not isinstance(dades, dict):
+            return False, ["L'arrel del JSON ha de ser un objecte."]
+
+        articles = dades.get("articles")
+        impostos = dades.get("impostos")
+
+        if not isinstance(articles, list):
+            errors.append("'articles' ha de ser una llista.")
+        if not isinstance(impostos, list):
+            errors.append("'impostos' ha de ser una llista.")
+
+        data = dades.get("data")
+        if data is not None and (not isinstance(data, str) or not cls._RE_DATA.match(data)):
+            errors.append("'data' ha de tenir format DD/MM/YYYY o null.")
+
+        hora = dades.get("hora")
+        if hora is not None and (not isinstance(hora, str) or not cls._RE_HORA.match(hora)):
+            errors.append("'hora' ha de tenir format HH:MM o null.")
+
+        for camp in cls._CAMPS_IMPORT_CAPCALERA:
+            cls._validar_import(dades.get(camp), camp, errors)
+
+        if isinstance(articles, list):
+            for i, article in enumerate(articles):
+                if not isinstance(article, dict):
+                    errors.append(f"articles[{i}] ha de ser un objecte.")
+                    continue
+
+                quantitat = article.get("quantitat")
+                if quantitat is not None and not isinstance(quantitat, (int, float)):
+                    errors.append(f"articles[{i}].quantitat ha de ser numèrica o null.")
+
+                for camp in cls._CAMPS_IMPORT_ARTICLE:
+                    cls._validar_import(article.get(camp), f"articles[{i}].{camp}", errors)
+                for camp in cls._CAMPS_PERCENT:
+                    cls._validar_percentatge(article.get(camp), f"articles[{i}].{camp}", errors)
+
+        if isinstance(impostos, list):
+            for i, impost in enumerate(impostos):
+                if not isinstance(impost, dict):
+                    errors.append(f"impostos[{i}] ha de ser un objecte.")
+                    continue
+
+                for camp in cls._CAMPS_IMPORT_IMPOST:
+                    cls._validar_import(impost.get(camp), f"impostos[{i}].{camp}", errors)
+                for camp in cls._CAMPS_PERCENT:
+                    cls._validar_percentatge(impost.get(camp), f"impostos[{i}].{camp}", errors)
+
+        return len(errors) == 0, errors
+
+    @classmethod
+    def _validar_import(cls, valor, camp, errors):
+        if valor is None:
+            return
+        if not isinstance(valor, str) or not cls._RE_IMPORT.match(valor):
+            errors.append(f"'{camp}' ha de ser string decimal amb coma (ex: '12,50') o null.")
+
+    @classmethod
+    def _validar_percentatge(cls, valor, camp, errors):
+        if valor is None:
+            return
+        if not isinstance(valor, str) or not cls._RE_PERCENT.match(valor):
+            errors.append(f"'{camp}' ha de ser string amb percentatge (ex: '21%') o null.")
 
 
 # =============================================================================
