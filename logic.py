@@ -12,6 +12,10 @@ from utils import GestorLogging, mesurar_temps, log_excepcions
 
 load_dotenv()
 
+TESSERACT_PATH = os.getenv("TESSERACT_PATH")
+if TESSERACT_PATH:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+
 class TranscriptorTiquets:
     def __init__(self, api_key=None, base_url=None):
         self.logger = GestorLogging.obtenir_logger("logic.TranscriptorTiquets")
