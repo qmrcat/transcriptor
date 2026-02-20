@@ -62,6 +62,7 @@ class InterficieGrafica(TkinterDnD.Tk):
         self.cache_pagines_pdf = {}  # Cache per pàgines ja carregades
 
         self.cancellar_proces = False
+        self._audio_inicialitzat = False
 
         self._configurar_layout()
         self._configurar_dnd()
@@ -571,25 +572,17 @@ class InterficieGrafica(TkinterDnD.Tk):
 
     def _reproduir_notificacio(self):
         """Reprodueix un so de notificació si està activat al .env."""
-        import platform
         if self.config_dades.get("enable_sound"):
             try:
-                if platform.system() == "Windows":
-                    # So tipus "Asterisk" de Windows (suau i professional)
-                    # winsound.Beep(1000, 200)
-                    # Fallback per a altres sistemes operatius
-                    # import pygame
+                if not self._audio_inicialitzat:
                     pygame.mixer.init()
-                    pygame.mixer.music.load('notification.mp3')  # Assegura't que aquest fitxer existeix
-                    pygame.mixer.music.play()                    
-                else:
-                    # Fallback per a altres sistemes operatius
-                    # import pygame
-                    pygame.mixer.init()
-                    pygame.mixer.music.load('notification.mp3')  # Assegura't que aquest fitxer existeix
-                    pygame.mixer.music.play()
+                    self._audio_inicialitzat = True
+
+                ruta_so = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notification.mp3")
+                pygame.mixer.music.load(ruta_so)
+                pygame.mixer.music.play()
             except Exception as e:
-                print(f"No s'ha pogut reproduir el so: {e}")
+                self.logger.warning(f"No s'ha pogut reproduir el so de notificació: {e}")
 
 
     def _finalitzar_processament(self, resultat):
